@@ -1,0 +1,18 @@
+bin/pg-rex_archivefile_delete
+bin/pg-rex_primary_start
+bin/pg-rex_standby_start
+bin/pg-rex_stop
+bin/pg-rex_switchover
+INSTALL
+lib.in/command-rhel8.pm
+lib/PGRex/command.pm
+lib/PGRex/common.pm
+lib/PGRex/Po/en.pm
+lib/PGRex/Po/ja.pm
+LICENSE
+Makefile.PL
+man/pg-rex_tools_manual.css
+man/pg-rex_tools_manual-ja.md
+man/html/pg-rex_tools_manual-ja.html
+MANIFEST			This list of files
+pg-rex_tools.conf

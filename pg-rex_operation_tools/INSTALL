@@ -1,0 +1,39 @@
+    ===============================================================
+      PG-REX 運用補助ツールをソースセットからインストールする方法
+    ===============================================================
+
+PG-REX 運用補助ツールをソースセットからインストールする方法を記載します。
+
+1) IO-Tty-1.11 と Net-OpenSSH-0.62 を以下の URL からダウンロードします
+  http://search.cpan.org/dist/IO-Tty/
+  http://search.cpan.org/dist/Net-OpenSSH/
+
+
+2) IO-Tty-1.11 を解凍しインストールします
+  # tar zxvf IO-Tty-1.11.tar.gz
+
+  # cd IO-Tty-1.11
+  # perl Makefile.PL
+  # make
+  # make install
+
+
+3) Net-OpenSSH-0.62 を解凍しインストールします
+  # tar zxvf Net-OpenSSH-0.62.tar.gz
+
+  # cd Net-OpenSSH-0.62
+  # perl Makefile.PL
+  # make
+  # make install
+
+
+4) PG-REX 運用補助ツール一式を解凍し配置します
+  # tar zxvf PG-REX_operation_tools-<ver>.tar.gz
+
+  # cd pg-rex_operation_tools-<ver>
+  # perl Makefile.PL
+  # make
+  # make pure_install
+
+
+以上

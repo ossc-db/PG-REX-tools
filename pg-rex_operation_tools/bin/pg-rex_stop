@@ -1,0 +1,208 @@
+#!/usr/bin/perl
+#####################################################################
+# Function: pg-rex_stop
+#
+#
+# 概要:
+# PG-REX での停止実行ツール。
+# 手順の簡易化を目的として作成している。
+# 
+# 特記事項:
+# なし
+#
+# Copyright (c) 2012-2023, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+#
+#####################################################################
+package PGRex;
+
+use warnings;
+use strict;
+use sigtrap qw(die normal-signals error-signals);
+use Getopt::Long;
+use PGRex::command;
+use PGRex::common qw(pacemaker_running standby_running read_config 
+                     exec_command get_pg_command_path check_user printlog
+                     check_support_version create_pid_file unlink_pid_file);
+
+BEGIN {
+    if ($ENV{'LANG'} =~ m/ja/i){
+        eval qq{
+            use PGRex::Po::ja;
+        };
+    }
+    else{
+        eval qq{
+            use PGRex::Po::en;
+        }
+    }
+
+	create_pid_file();
+};
+
+END {
+	unlink_pid_file();
+};
+
+$SIG{INT} = sub {
+    printlog("LOG", STOP_MS0001);
+};
+
+main();
+
+1;
+
+sub main{
+    my $help_mode = 0;
+    my $version_mode = 0;
+    my $fast_mode = 0;
+    my $config_path = CONFIG_PATH.CONFIG_FILENAME;
+    my %config_value;
+    my $my_node = "";
+    my $another_node = "";
+    my %command_path;
+    my $pg_command_user = "postgres";
+    my $stop_target = "Stopped";
+    my $timeout = 300;
+    my $monitor_time = 2;
+    my $wait_time = 0;
+    my $result;
+    my @results;
+    my $exit_code;
+    my $kill_when_no_data = 0;
+    my $myself;
+
+    # 標準出力が途中で停止するのを防ぐ為に
+    # 標準出力のオートフラッシュを有効化
+    $| = 1;
+
+    # オプション解析
+    foreach ( @ARGV ){
+        if ( "$_" eq "-" || "$_" eq "--" ){
+            $help_mode = 1;
+        }
+    }
+    $exit_code = GetOptions('help'                => \$help_mode,
+                         'additional_information' => \$PGRex::common::additional_information_mode,
+                         'version'                => \$version_mode,
+                         'fast'                   => \$fast_mode);
+    $myself = $0;
+    $myself =~ s/.*\///g;
+    if ($help_mode || !$exit_code){
+        printlog("VERSION", VERSIONINFO, $myself, VERSIONNUM);
+        print "\n";
+        printlog("USAGE", STOP_USAGE);
+        exit(0);
+    }
+    if ($version_mode){
+        printlog("VERSION", VERSIONINFO, $myself, VERSIONNUM);
+        exit(0);
+    }
+
+    # コマンドを実行しているマシンのノード名を取得
+    # 実行ユーザの確認
+    check_user();
+
+    # 環境設定ファイルの読み込み
+    %config_value = read_config($config_path);
+
+    # PostgreSQL のコマンドパスを取得
+    %command_path = get_pg_command_path($config_value{'PGPATH'});
+
+    # Pacemaker と PostgreSQL がサポート対象バージョンであるかを確認
+    check_support_version($command_path{'postgres'});
+
+    ### スクリプト実行準備 ###
+
+    $my_node = exec_command("$UNAME -n");
+    chomp $my_node;
+
+    ### Pacemaker 停止準備 ###
+    # Pacemaker 及び Corosync のプロセスを確認
+    # Pacemaker 及び Corosync のプロセスが無かったら、処理を終了
+    # ※Pacemaker または Corosync が停止していて、PostgreSQL が起動中の場合も処理を終了させる
+    if (!pacemaker_running()){
+        printlog("LOG", STOP_MS0004);
+        exit(0);
+    }
+
+    # 相手ノードのノード名を取得する   
+    # Pacemaker 1.1.13の場合、crm_node の実行結果は下記となる。
+    # <クラスタのノードID> <ノード名>
+    # Pacemaker 1.1.14の場合、crm_node の実行結果は下記となる。
+    # <クラスタのノードID> <ノード名> <状態>
+    @results = split(/\n/, exec_command("$CRM_NODE -l"));
+    foreach my $record (@results){
+        my @field_list = split(/\s/, $record);
+        if($field_list[1] ne $my_node){
+            $another_node = $field_list[1];
+        }
+    }
+
+    $result = `$SU - $pg_command_user -c \" $command_path{'psql'} -t -c \\\"SELECT pg_is_in_recovery(); \\\" 2> /dev/null\"`;
+    chomp $result;
+    # SQL result format : <space><values>
+    $result =~ s/\s//g;
+    if ($result eq "f"){
+        $stop_target = "Primary";
+        printlog("LOG", STOP_MS0006);
+    }
+    elsif ($result eq "t") {
+        $stop_target = "Standby";
+        printlog("LOG", STOP_MS0007);
+    }
+    else {
+        printlog("LOG", STOP_MS0005);
+    }
+
+    # Primary を停止する場合でかつ Standby が起動中の場合、ユーザに確認
+    if ($stop_target eq "Primary" && $another_node && standby_running($another_node, $config_value{'PG_REX_Primary_ResourceID'}, $config_value{'PG_REX_Primitive_ResourceID'})){
+        printlog("LOG", STOP_MS0018);
+        printlog("LOG", STOP_MS0019);
+        printlog("LOG", STOP_MS0020);
+        my $input = <STDIN>;
+        chomp $input;
+        if ($input !~ m/^y$/i) {
+            printlog("LOG", STOP_MS0009);
+            exit(0);
+        }
+    }
+
+    # CHECKPOINT処理と sync コマンドの実行
+    if (!$fast_mode){
+        `$SU - $pg_command_user -c \"$command_path{'psql'} -c \\\"CHECKPOINT\\\"\" 2> /dev/null`;
+        `$SYNC`;
+    }
+
+    ### Pacemaker 停止 ###
+    printlog("LOG", STOP_MS0010);
+    exec_command("$PCS cluster stop --force");
+    printlog("LOG", STOP_MS0011);
+
+    ### Pacemaker 停止確認 ###
+    printlog("LOG", STOP_MS0012);
+    # プロセスの確認
+    while (1){
+        # Pacemaker、Corosync のプロセス確認ができた場合、無限ループを抜ける
+        if (!pacemaker_running()){
+                last;
+        }
+
+        if ($wait_time >= $timeout){
+            printlog("LOG", STOP_MS0013);
+            printlog("ERROR", STOP_MS0014, $timeout);
+        }
+
+        sleep $monitor_time;
+        $wait_time += $monitor_time;
+    }
+    printlog("LOG", STOP_MS0011);
+
+    if ($stop_target eq "Stopped"){
+        printlog("LOG", STOP_MS0015, $my_node);
+    }
+    else {
+        printlog("LOG", STOP_MS0016, $stop_target, $my_node);
+    }
+
+    exit(0);
+}

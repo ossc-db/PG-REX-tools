@@ -1,0 +1,562 @@
+#!/usr/bin/perl
+#####################################################################
+# Function: pg-rex_switch_over
+#
+#
+# 概要:
+# PG-REX での高速スイッチオーバ実行ツール。
+# 
+# 特記事項:
+# なし
+#
+# Copyright (c) 2012-2023, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+#
+#####################################################################
+package PGRex;
+
+use warnings;
+use strict;
+use sigtrap qw(die normal-signals error-signals);
+use Getopt::Long qw(:config no_ignore_case);
+use PGRex::command;
+use PGRex::common qw(pacemaker_online primary_running vip_running read_config
+                     read_cib exec_command get_pg_command_path
+                     get_ssh_passwd check_user printlog
+                     ssh_exec_command pacemaker_running
+                     standby_running check_support_version
+                     create_pid_file unlink_pid_file get_controldata_value
+                     get_sync_files receive_archive send_archive);
+
+BEGIN {
+    if ($ENV{'LANG'} =~ m/ja/i){
+        eval qq{
+            use PGRex::Po::ja;
+        };
+    }
+    else{
+        eval qq{
+            use PGRex::Po::en;
+        }
+    }
+
+	create_pid_file();
+};
+
+END {
+	unlink_pid_file();
+};
+
+$SIG{INT} = sub {
+    printlog("LOG", SWITCHOVER_MS0001);
+};
+
+main();
+
+1;
+
+sub main{
+	my $help_mode = 0;
+	my $version_mode = 0;
+	my %config_value;
+	my $config_path = CONFIG_PATH.CONFIG_FILENAME;
+	my $ssh_pass;
+	my %command_path;
+	my %node_value;
+	my $pg_command_user = "postgres";
+	my $monitor_delay = 10;
+	my $monitor_interval = 2;
+	my $wait_time = 0;
+	my $cib_path = CIB_PATH.CIB_FILENAME;
+	my $kill_when_no_data = 1;
+	my $timeout = 300;
+	my $starting_resource = "";
+	my $lock_file;
+	my $operation_num = 1;
+	my $hacf_path = HACF_PATH.HACF_FILENAME;
+	my %my_cib_value;
+	my $exec_user;
+	my $primary_node = 0;
+	my $current_primary_node;
+	my $current_standby_node;
+	my @results;
+	my $result;
+	my $exit_code;
+	my @pacemaker_alive;
+	my @pacemaker_dead;
+	my $myself;
+	my @sync_state;
+	my $command;
+	my $command2;
+	my %postgres_status;
+	my $print_sync_state;
+
+	# 標準出力が途中で停止するのを防ぐ為に
+	# 標準出力のオートフラッシュを有効化
+	$| = 1;
+
+	# オプション解析
+
+	foreach ( @ARGV ){
+		if ( "$_" eq "-" || "$_" eq "--" ){
+			$help_mode = 1;
+		}
+	}
+	$exit_code = GetOptions('help'                   => \$help_mode,
+							'additional_information' => \$PGRex::common::additional_information_mode,
+							'version'                => \$version_mode);
+	$myself = $0;
+	$myself =~ s/.*\///g;
+	if ($help_mode || !$exit_code){
+		printlog("VERSION", VERSIONINFO, $myself, VERSIONNUM);
+		print "\n";
+		printlog("USAGE", SWITCHOVER_USAGE);
+		exit(0);
+	}
+	if ($version_mode){
+		printlog("VERSION", VERSIONINFO, $myself, VERSIONNUM);
+		exit(0);
+	}
+
+	# 実行ユーザの確認
+	check_user();
+	$exec_user = exec_command("$WHOAMI");
+	chomp $exec_user;
+
+	# 環境設定ファイルの読み込み
+	# SWITCHOVER_MS0003 を出力する前であるが、PostgreSQL のバージョンチェックに
+	# 環境設定ファイルの設定情報が必要なため、この時点で読み込む
+	%config_value = read_config($config_path);
+
+	# PostgreSQL のコマンドパスを取得
+	%command_path = get_pg_command_path($config_value{'PGPATH'});
+
+	# Pacemaker と PostgreSQL がサポート対象バージョンであるかを確認
+	check_support_version($command_path{'postgres'});
+
+	### スクリプト実行準備 ###
+
+	# ssh 接続の為の情報の取得
+	$ssh_pass = get_ssh_passwd($config_value{'Another_D_LAN_IPAddress'}, $config_value{'PEER_NODE_SSH_PASS_MODE'}, $config_value{'PEER_NODE_SSH_PASS_FILE'});
+	my $ssh_info = new Ssh_info();
+	$ssh_info->address("$config_value{'Another_D_LAN_IPAddress'}");
+	$ssh_info->user("$exec_user");
+	$ssh_info->pass("$ssh_pass");
+
+	printlog("LOG", SWITCHOVER_MS0002);
+	printlog("LOG", SWITCHOVER_MS0003, $operation_num++);
+
+	# PostgreSQL のコマンドパスを取得
+	%command_path = get_pg_command_path($config_value{'PGPATH'});
+
+	# コマンドを実行しているマシンのノード名ともう一台のノード名を取得
+	%node_value = get_node($ssh_info);
+
+	# cib.xml ファイルを読み込む
+	%my_cib_value = read_cib($cib_path, $config_value{'PG_REX_Primitive_ResourceID'}, $kill_when_no_data);
+
+	printlog("LOG", SWITCHOVER_MS0004);
+	
+	# 現在のクラスタ状態を確認
+	printlog("LOG", SWITCHOVER_MS0008, $operation_num++);
+
+	# Pacemaker の稼働状態を確認
+	# ローカルノードで pcs status --full を実行
+	$command = "$PCS status --full 2>&1";
+	$results[0] = `$command`;
+	$exit_code = $? >> 8;
+	if ($exit_code == 1){
+		push(@pacemaker_dead, $node_value{'my_node'});
+	}
+
+	# ローカルノードでのpcs status --fullの実行に失敗した場合はリモートノードで実行
+	if (@pacemaker_dead){
+		@results = ssh_exec_command($ssh_info, $command);
+		$exit_code = $results[1];
+		if ($exit_code == 1){
+			push(@pacemaker_dead, $node_value{'another_node'});
+		}
+	}
+
+	# pcs status --full実行結果を解析
+	@results = split (/\n/, $results[0]);
+	foreach my $line (@results){
+		if ($line =~ /Online\:/){
+			# ローカルノードで pcs status --full の実行が失敗している場合は新たに
+			# 判定を行わない
+			$result = grep /^$node_value{'my_node'}$/, @pacemaker_dead;
+			if (!$result){
+				if($line =~ /\s$node_value{'my_node'}\s/){
+					push(@pacemaker_alive, $node_value{'my_node'});
+				}
+				else {
+					push(@pacemaker_dead, $node_value{'my_node'});
+				}
+			}
+			# リモートノードで pcs status --full の実行が失敗している場合は新たに
+			# 判定を行わない
+			$result = grep /^$node_value{'another_node'}$/, @pacemaker_dead;
+			if (!$result){
+				if ($line =~ /\s$node_value{'another_node'}\s/){
+					push(@pacemaker_alive, $node_value{'another_node'});
+				}
+				else {
+					push(@pacemaker_dead, $node_value{'another_node'});
+				}
+			}
+		}
+	}
+
+	# ローカルノードの PostgreSQL の稼働状態を確認
+	$command = "$SU - $pg_command_user -c \"$command_path{'psql'} -tAc \\\"SELECT pg_is_in_recovery()\\\"\" 2> /dev/null";
+	$command2 = "$SU - $pg_command_user -c \"$command_path{'psql'} -tAc \\\"SELECT sync_state FROM pg_stat_replication WHERE client_addr = '$config_value{'Another_D_LAN_IPAddress'}' ORDER BY sync_state DESC\\\"\" 2> /dev/null";
+	$result = `$command`;
+	$exit_code = $? >> 8;
+	chomp $result;
+	@results = split(/\|/, $result);
+	if ($exit_code){
+		$postgres_status{'my_node'} = "Stopped";
+	}
+	elsif ($results[0] eq "f"){
+		$postgres_status{'my_node'} = "Primary";
+		$result = `$command2`;
+		@sync_state = split(/\n/, $result);
+	}
+	elsif ($results[0] eq "t") {
+		$postgres_status{'my_node'} = "Standby";
+	}
+
+	# リモートノードの PostgreSQL の稼働状態を確認
+	$command2 = "$SU - $pg_command_user -c \"$command_path{'psql'} -tAc \\\"SELECT sync_state FROM pg_stat_replication WHERE client_addr = '$config_value{'My_D_LAN_IPAddress'}' ORDER BY sync_state DESC\\\"\" 2> /dev/null";
+	@results = ssh_exec_command($ssh_info, "$command");
+	$exit_code = $results[1];
+	chomp $results[0];
+	@results = split(/\|/, $results[0]);
+	if ($exit_code){
+		$postgres_status{'another_node'} = "Stopped";
+	}
+	elsif ($results[0] eq "f"){
+		$postgres_status{'another_node'} = "Primary";
+		@results = ssh_exec_command($ssh_info, "$command2");
+		@sync_state = split(/\n/, $results[0]);
+	}
+	elsif ($results[0] eq "t"){
+		$postgres_status{'another_node'} = "Standby";
+	}
+
+	# PrimaryとStandbyの稼働状態を整理
+	if ($postgres_status{'my_node'} eq "Primary"){
+		$current_primary_node = $node_value{'my_node'};
+		$primary_node = 1;
+		if ($postgres_status{'another_node'} eq "Primary"){
+			$current_primary_node .= " ".$node_value{'another_node'};
+		}
+		elsif ($postgres_status{'another_node'} eq "Standby"){
+			$current_standby_node = $node_value{'another_node'};
+			$print_sync_state = 1;
+		}
+		else {
+			$current_standby_node = $postgres_status{'another_node'};
+		}
+	}
+	elsif ($postgres_status{'my_node'} eq "Standby"){
+		$current_standby_node = $node_value{'my_node'};
+		if ($postgres_status{'another_node'} eq "Primary"){
+			$current_primary_node = $node_value{'another_node'};
+			$print_sync_state = 1;
+		}
+		elsif ($postgres_status{'another_node'} eq "Standby"){
+			$current_standby_node .= " ".$node_value{'another_node'};
+		}
+		else {
+			$current_primary_node = $postgres_status{'another_node'};
+		}
+	}
+	else {
+		if ($postgres_status{'another_node'} eq "Primary"){
+			$current_primary_node = $node_value{'another_node'};
+			$current_standby_node = $postgres_status{'my_node'};
+		}
+		elsif ($postgres_status{'another_node'} eq "Standby"){
+			$current_standby_node = $node_value{'another_node'};
+			$current_primary_node = $postgres_status{'my_node'};
+		}
+		else {
+			$current_primary_node = $postgres_status{'another_node'};
+			$current_standby_node = $postgres_status{'my_node'};
+		}
+	}
+
+	# 現在のクラスタ状態でノード切り替えが可能であるかを確認し、
+	# ノード切り替えが実行可能でない場合は現在のクラスタ状態を出力して異常終了
+	if (@pacemaker_dead || 
+	    !($current_primary_node && $current_standby_node) ||
+	    ($current_primary_node eq "Stopped" || $current_standby_node eq "Stopped") ||
+	    (@sync_state == 0) ||
+	    ($sync_state[0] ne "sync")){
+		printlog("LOG", SWITCHOVER_MS0005);
+		printlog("LOG", SWITCHOVER_MS0009);
+		print "\n";
+		printlog("LOG", SWITCHOVER_MS0010);
+		print " "."Pacemaker\n";
+		if (@pacemaker_alive){
+			print "  "."Online :";
+			foreach (@pacemaker_alive){
+				print " ".$_;
+			}
+			print "\n";
+		}
+		if (@pacemaker_dead){
+			print "  "."OFFLINE:";
+			foreach (@pacemaker_dead){
+				print " ".$_;
+			}
+			print "\n";
+		}
+		print "\n";
+		print " "."PostgreSQL\n";
+		if ($current_primary_node){
+			print "  "."Primary : $current_primary_node\n";
+		}
+		if ($current_standby_node){
+			print "  "."Standby  : $current_standby_node";
+			if ($print_sync_state && @sync_state == 0){
+				print " "."(not replication state)\n";
+			}
+			elsif ($print_sync_state && @sync_state != 0){
+			    print " "."($sync_state[0])\n";
+			}
+			else {
+				print "\n";
+			}
+		}
+		print "\n";
+		exit(1);
+	}
+
+	# クラスタ状態が正常である場合は現在のクラスタ状態を出力して
+	# 実行するか否かを確認
+	print "\n";
+	printlog("LOG", SWITCHOVER_MS0011);
+	print " Primary : $current_primary_node -> $current_standby_node\n";
+	print " Standby : $current_standby_node -> $current_primary_node\n";
+	print "\n";
+	printlog("LOG", SWITCHOVER_MS0012);
+	if (@sync_state >= 2) { 
+		printlog("LOG", SWITCHOVER_MS0013, $current_standby_node);
+	}
+	printlog("LOG", SWITCHOVER_MS0014);
+
+	my $input = <STDIN>;
+	chomp $input;
+	if ($input !~ m/^y$/i){
+		printlog("LOG", SWITCHOVER_MS0015);
+		exit(0);
+	}
+	print "\n";
+
+	# ノード切り替えを実行
+	printlog("LOG", SWITCHOVER_MS0018);
+
+	# Pacemaker の監視を一時停止する
+	printlog("LOG", SWITCHOVER_MS0019, $operation_num++);
+	exec_command("$PCS property set maintenance-mode=true 2> /dev/null");
+	printlog("LOG", SWITCHOVER_MS0004);
+
+	# Primary ノードの PostgreSQL を停止する
+	printlog("LOG", SWITCHOVER_MS0020, $operation_num++, $current_primary_node);
+	$command = "$SU - $pg_command_user -c \"$my_cib_value{'pgctl'} stop -m fast -t 600 -D $my_cib_value{'pgdata'}\"";
+	if ($primary_node){
+		`$command`;
+		$exit_code = $? >> 8;
+	}
+	else {
+		@results = ssh_exec_command($ssh_info, $command);
+		$exit_code = $results[1];
+	}
+	
+	if ($exit_code){
+		printlog("LOG", SWITCHOVER_MS0005);
+	}
+	else {
+		printlog("LOG", SWITCHOVER_MS0004);
+	}
+
+	# Pacemaker の監視を再開する
+	printlog("LOG", SWITCHOVER_MS0021, $operation_num++);
+	exec_command("$PCS property set maintenance-mode= 2> /dev/null");
+	printlog("LOG", SWITCHOVER_MS0004);
+
+	# Primary が故障検知されたことを確認
+	my $tmp_node;
+	$tmp_node = $current_primary_node;
+	$current_primary_node = $current_standby_node;
+	$current_standby_node = $tmp_node;
+
+	printlog("LOG", SWITCHOVER_MS0022, $operation_num++, $current_primary_node);
+
+	while (1){
+		if ($wait_time >= $timeout){
+			printlog("LOG", SWITCHOVER_MS0005);
+			printlog("ERROR", SWITCHOVER_MS0023, $timeout, $starting_resource);
+		}
+		sleep $monitor_interval;
+		$wait_time += $monitor_interval;
+
+		if (!pacemaker_online($current_primary_node)){
+			$starting_resource = "Pacemaker ($current_primary_node)";
+			next;
+		}
+
+		if (!primary_running($current_primary_node, $config_value{'PG_REX_Primary_ResourceID'}, $config_value{'PG_REX_Primitive_ResourceID'})){
+			$starting_resource = "Primary ($current_primary_node)";
+			next;
+		}
+
+		# IPADDR_PRIMARY のリソース ID 指定有りの場合、起動確認を行なう
+		if ($config_value{'IPADDR_PRIMARY_ResourceID'} && !vip_running($current_primary_node, $config_value{'IPADDR_PRIMARY_ResourceID'})){
+			$starting_resource = "IPADDR_PRIMARY ($current_primary_node)";
+			next;
+		}
+
+		# IPADDR_REPLICATION のリソース ID 指定有りの場合、起動確認を行なう
+		if ($config_value{'IPADDR_REPLICATION_ResourceID'} && !vip_running($current_primary_node, $config_value{'IPADDR_REPLICATION_ResourceID'})){
+			$starting_resource = "IPADDR_REPLICATION ($current_primary_node)";
+			next;
+		}
+
+		# IPADDR_STANDBY 環境有りかつリソース ID 指定有りの場合、起動確認を行なう
+		if ($config_value{'IPADDR_STANDBY_ResourceID'} && !vip_running($current_primary_node, $config_value{'IPADDR_STANDBY_ResourceID'})){
+			$starting_resource = "IPADDR_STANDBY ($current_primary_node)";
+			next;
+		}
+		# pcs status --full の結果が全て揃ったら無限ループを抜ける
+		last;
+	}
+
+	print "\n";
+	printlog("LOG", SWITCHOVER_MS0033, $current_primary_node);
+	print "\n";
+
+	# 元 Primary ノードの Pacemaker を停止
+	printlog("LOG", SWITCHOVER_MS0026, $operation_num++, $current_standby_node);
+	switch_exec_command($primary_node, $ssh_info, "$PCS cluster stop --force");
+
+    ### Pacemaker 停止確認 ###
+	# Pacemaker 、Corosync のプロセス確認ができた場合、無限ループを抜ける
+	$wait_time = 0;
+	while (1){
+		# 元 Primary ノードがローカルノードの場合
+		if ($primary_node){
+			if (!pacemaker_running()){
+				last;
+			}
+		}
+		# 元 Primary ノードがリモートノードの場合
+		else{
+			if (!pacemaker_running($ssh_info)){
+				last;
+			}
+		}
+		if ($wait_time >= $timeout){
+			printlog("LOG", SWITCHOVER_MS0005);
+			printlog("ERROR", SWITCHOVER_MS0027, $timeout);
+		}
+		sleep $monitor_interval;
+		$wait_time += $monitor_interval;
+	}
+
+	printlog("LOG", SWITCHOVER_MS0004);
+
+	# 元 Primary ノードで Standby の再組み込みを実行
+	printlog("LOG", SWITCHOVER_MS0028, $operation_num++, $current_standby_node);
+
+	# 起動禁止フラグの削除
+	$lock_file = $my_cib_value{'tmpdir'}."/".LOCK_FILENAME;
+	@results = switch_exec_command($primary_node, $ssh_info, "$LS -l $lock_file");
+	if ($results[0] =~ /[\s\S]*$lock_file[\s\S]*/){
+		switch_exec_command($primary_node, $ssh_info, "$SU - $pg_command_user -c \"$RM -f $lock_file\"");
+	}
+
+	my $archive_dir = $config_value{'Archive_dir'}."/";
+	@results = switch_exec_command($primary_node, $ssh_info, "export LANG=C; $command_path{'pg_controldata'} $my_cib_value{'pgdata'}");
+	my @controldata_strings = split(/\n/, $results[0]);
+	my $controldata = get_controldata_value(@controldata_strings);
+	my $bytes_per_wal_segment = $controldata->{"Bytes per WAL segment"};
+
+	# アーカイブディレクトリを同期する
+	# 新スレーブがローカルノードの場合
+	if ($primary_node){
+		my %sync_files = get_sync_files($ssh_info, $archive_dir, $archive_dir, 0);
+		receive_archive($ssh_info, $archive_dir, $bytes_per_wal_segment, \%sync_files);      
+        } else {
+	# 新スレーブがリモートノードの場合
+		my %sync_files = get_sync_files($ssh_info, $archive_dir, $archive_dir, 1);
+		send_archive($ssh_info, $archive_dir, $bytes_per_wal_segment, \%sync_files);
+	}
+
+	# Pacemaker の起動
+	switch_exec_command($primary_node, $ssh_info, "$PCS cluster start");
+
+	# 新 Standby が起動されたことを確認
+	# pcs status --full の結果を確認
+	# Pacemaker 起動から暫くの間は pcs status --full の結果に PostgreSQL の制御エラー情報(Failed Resource Actions)
+	# が残っている可能性がある。そのため、起動確認の前に RA(pgsql) のモニタ間隔以上のディレイをおき、
+	# 誤検知しないようにする。
+	sleep $monitor_delay;
+	$wait_time = 0;
+	while (1){
+		if ($wait_time >= $timeout){
+			printlog("LOG", SWITCHOVER_MS0005);
+			printlog("ERROR", SWITCHOVER_MS0023, $timeout, $starting_resource);
+		}
+		sleep $monitor_interval;
+		$wait_time += $monitor_interval;
+
+		if (!pacemaker_online($current_standby_node)){
+			$starting_resource = "Pacemaker ($current_standby_node)";
+			next;
+		}
+
+		if (!standby_running($current_standby_node, $config_value{'PG_REX_Primary_ResourceID'}, $config_value{'PG_REX_Primitive_ResourceID'})){
+			$starting_resource = "Standby ($current_standby_node)";
+			next;
+		}
+
+		# IPADDR_STANDBY 環境有りかつリソース ID 指定有りの場合、起動確認を行なう
+		if ($config_value{'IPADDR_STANDBY_ResourceID'} && !vip_running($current_standby_node, $config_value{'IPADDR_STANDBY_ResourceID'})){
+			$starting_resource = "IPADDR_STANDBY ($current_standby_node)";
+			next;
+		}
+		# pcs status --full の結果が全て揃ったら無限ループを抜ける
+		last;
+	}
+
+	print "\n";
+	printlog("LOG", SWITCHOVER_MS0030, $current_standby_node);
+	print "\n";
+	printlog("LOG", SWITCHOVER_MS0031);
+	print "\n";
+	printlog("LOG", SWITCHOVER_MS0010);
+	print " Primary : $current_primary_node\n";
+	print " Standby : $current_standby_node\n";
+	print "\n";
+	exit(0);
+}
+
+sub switch_exec_command {
+	my ($primary_node, $ssh_info, $command) = @_;
+	my @results;
+	my $exit_code;
+
+	if ($primary_node) {
+		$results[0] = exec_command($command);
+	}
+	else {
+		@results = ssh_exec_command($ssh_info, $command);
+		$exit_code = $results[1];
+		if ($exit_code != 0){
+			printlog("ERROR", SWITCHOVER_MS0032, $command);
+		}
+	}
+	return @results;
+}

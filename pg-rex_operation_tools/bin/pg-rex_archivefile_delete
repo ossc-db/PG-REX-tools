@@ -1,0 +1,448 @@
+#!/usr/bin/perl
+#####################################################################
+# Function: pg-rex_archivefile_delete
+#
+#
+# 概要:
+# PG-REX でのアーカイブ削除用の実行ツール。
+# 手順の簡易化を目的として作成している。
+# 
+# 特記事項:
+# なし
+#
+# Copyright (c) 2012-2023, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+#
+#####################################################################
+package PGRex;
+
+use warnings;
+use strict;
+use sigtrap qw(die normal-signals error-signals);
+use Getopt::Long;
+use PGRex::command;
+use PGRex::common qw(read_config read_cib exec_command get_ssh_passwd
+                     ssh_exec_command get_recoverywal get_node 
+                     get_pg_command_path printlog check_support_version);
+
+BEGIN {
+    if ($ENV{'LANG'} =~ m/ja/i){
+        eval qq{
+            use PGRex::Po::ja;
+        };
+    }
+    else{
+        eval qq{
+            use PGRex::Po::en;
+        }
+    }
+};
+
+$SIG{INT} = sub {
+    printlog("LOG", ARCHDELETE_MS0001);
+};
+
+main();
+
+1;
+
+sub main{
+    my $help_mode = 0;
+    my $version_mode = 0;
+    my $force_mode = 0;
+    my $mv_mode = 0;
+    my $rm_mode = 0;
+    my $dbcluster_mode = 0;
+    my $config_path = CONFIG_PATH.CONFIG_FILENAME;
+    my %config_value;
+    my $cib_path = CIB_PATH.CIB_FILENAME;
+    my %my_cib_value;
+    my $exec_user;
+    my %node_value;
+    my %command_path;
+    my $pg_command_user = "postgres";
+    my $ssh_pass;
+    my $ssh_pass_backup_node;
+    my $input_node;
+    my $input_path;
+    my $dbcluster_path = "";
+    my $backup_pgdata;
+    my $backup_node;
+    my $backup_path;
+    my $archive_dir;
+    my $result;
+    my @results;
+    my $exit_code;
+    my $kill_when_no_data = 1;
+    my $myself;
+    my $input;
+
+    # 標準出力が途中で停止するのを防ぐ為に
+    # 標準出力のオートフラッシュを有効化
+    $| = 1;
+
+    # オプション解析
+    foreach ( @ARGV ){
+        if ( "$_" eq "-" || "$_" eq "--" ){
+            $help_mode = 1;
+        }
+    }
+    $exit_code = GetOptions('help'                => \$help_mode,
+                         'force'                  => \$force_mode,
+                         'move'                   => \$mv_mode,
+                         'remove'                 => \$rm_mode,
+                         'dbcluster=s'            => \$dbcluster_mode,
+                         'additional_information' => \$PGRex::common::additional_information_mode,
+                         'version'                => \$version_mode);
+
+    $backup_pgdata = shift(@ARGV);
+    $myself = $0;
+    $myself =~ s/.*\///g;
+
+    if ($help_mode || (!$mv_mode && !$rm_mode && !$version_mode) || !$exit_code){
+        printlog("VERSION", VERSIONINFO, $myself, VERSIONNUM);
+        print "\n";
+        printlog("USAGE", ARCHDELETE_USAGE);
+        exit(0);
+    }
+    
+    if ($version_mode){
+        printlog("VERSION", VERSIONINFO, $myself, VERSIONNUM);
+        exit(0);
+    }
+
+    # 実行ユーザの確認
+    $exec_user = exec_command("$WHOAMI");
+    chomp $exec_user;
+
+    # 環境設定ファイルの読み込み
+    # ARCHDELETE_MS0003 を出力する前であるが、PostgreSQL のバージョンチェックに
+    # 環境設定ファイルの設定情報が必要なため、この時点で読み込む
+    %config_value = read_config($config_path);
+    $archive_dir = $config_value{'Archive_dir'};
+
+    # PostgreSQL のコマンドパスを取得
+    %command_path = get_pg_command_path($config_value{'PGPATH'}, $exec_user);
+
+    # Pacemaker と PostgreSQL がサポート対象バージョンであるかを確認
+    check_support_version($command_path{'postgres'}, $exec_user);
+
+    ### スクリプト実行準備 ###
+
+    if ($mv_mode && $rm_mode){
+        printlog("ERROR", ARCHDELETE_MS0002);
+    }
+
+    printlog("LOG", ARCHDELETE_MS0003);
+
+    my $mode = "rm";
+    if ($mv_mode) {
+        $mode = "mv";
+        printlog("LOG", ARCHDELETE_MS0004);
+    }
+    else {
+        printlog("LOG", ARCHDELETE_MS0005);
+    }
+
+    if ($backup_pgdata){
+        # backup path format : <host name>:/<path name> or /<path name>
+        # <host name>には「:」や「@」を含まない
+        if ($backup_pgdata !~ /^(([^:@;|&]+):)?(\/.+)$/) {
+            printlog("ERROR", ARCHDELETE_MS0006, $backup_pgdata);
+        }
+        $backup_node = $2;
+        $backup_path = $3;
+        
+        if (!$backup_node){
+            $backup_node = 'localhost';
+        }
+    }
+    elsif (!$force_mode){
+        printlog("LOG", ARCHDELETE_MS0007);
+        $input_node = <STDIN>;
+        chomp $input_node;
+        # backup host name format : <host name>
+        # <host name>には「:」や「@」を含まない
+        if ($input_node){
+            if ($input_node !~ /^[^:@\s;|&]+$/){
+                printlog("ERROR", ARCHDELETE_MS0008, $input_node);
+            }
+            $backup_node = $input_node;
+        }
+        else{
+            $backup_node = 'localhost';
+        }
+
+        printlog("LOG", ARCHDELETE_MS0009);
+        $input_path = <STDIN>;
+        chomp $input_path;
+        if ($input_path){
+            # backup path name format : /<path name>
+            if ($input_path !~ /^\/[^\s;|&]*$/){
+                printlog("ERROR", ARCHDELETE_MS0010, $input_path);
+            }
+        }
+        $backup_path = $input_path;
+
+        if ($backup_path){
+            printlog("LOG", ARCHDELETE_MS0011, $backup_node, $backup_path);
+            $input = <STDIN>;
+            chomp $input;
+            if ($input !~ m/^y$/i) {
+                printlog("LOG", ARCHDELETE_MS0012);
+                exit(0);
+            }
+        }
+    }
+
+    # バックアップディレクトリパスの末尾の "/" がある場合それを削除
+    if ($backup_path) {
+        $backup_path =~ s/\/+$//;
+    }
+
+    printlog("LOG", ARCHDELETE_MS0013);
+
+    # PG-REX相手ノードへの ssh 接続の為の情報を取得
+    $ssh_pass = get_ssh_passwd($config_value{'Another_D_LAN_IPAddress'}, $config_value{'PEER_NODE_SSH_PASS_MODE'}, $config_value{'PEER_NODE_SSH_PASS_FILE'});
+    my $ssh_info = new Ssh_info();
+    $ssh_info->address("$config_value{'Another_D_LAN_IPAddress'}");
+    $ssh_info->user("$exec_user");
+    $ssh_info->pass("$ssh_pass");
+
+    # ノード名の取得
+    printlog("LOG", ARCHDELETE_MS0015);
+    %node_value = get_node($ssh_info);
+
+    # rootユーザで実行している時のみ cib.xml ファイルを読み込み、ツールに必要な情報を取得
+    if ($exec_user eq "root") {
+        printlog("LOG", ARCHDELETE_MS0016);
+        %my_cib_value = read_cib($cib_path, $config_value{'PG_REX_Primitive_ResourceID'}, $kill_when_no_data);
+    }
+
+    # DBクラスタのパスを、オプション→cib.xmlファイル→環境変数の優先度で取得
+    if ($dbcluster_mode){
+        $dbcluster_path = $dbcluster_mode;
+    }
+    if (!$dbcluster_path && $exec_user eq "root"){
+        $dbcluster_path = $my_cib_value{'pgdata'};
+    }
+    if (!$dbcluster_path){
+        $dbcluster_path = $ENV{'PGDATA'};
+    }
+    if (!$dbcluster_path){
+        printlog("ERROR", ARCHDELETE_MS0044);
+    }
+
+    # バックアップの指定無し時の確認
+    if (!$backup_path && !$force_mode){
+        printlog("LOG", ARCHDELETE_MS0018, $node_value{'my_node'}, $node_value{'another_node'}, $dbcluster_path);
+        $input = <STDIN>;
+        chomp $input;
+        if ($input !~ m/^y$/i) {
+            printlog("LOG", ARCHDELETE_MS0012);
+            exit(0);
+        }
+    }
+
+    ### バックアップの pgdata の状態を取得 ###
+    printlog("LOG", ARCHDELETE_MS0019);
+
+    my $command;
+    my $backup_wal = '';
+    my $ssh_info_backup_node = new Ssh_info();
+    if ($backup_path){
+        printlog("LOG", ARCHDELETE_MS0020);
+        $command = "$LS -d $backup_path";
+        if ($backup_node ne 'localhost'){
+            # バックアップが存在するノードへの ssh 接続の為の情報を取得
+            $ssh_pass_backup_node = get_ssh_passwd($backup_node, $config_value{'BACKUP_NODE_SSH_PASS_MODE'}, $config_value{'BACKUP_NODE_SSH_PASS_FILE'});
+            $ssh_info_backup_node->address("$backup_node");
+            $ssh_info_backup_node->user("$exec_user");
+            $ssh_info_backup_node->pass("$ssh_pass_backup_node");
+            @results = ssh_exec_command($ssh_info_backup_node, $command, "NO_EXIT");
+            if (defined($results[2])){
+                printlog("ERROR", ARCHDELETE_MS0046);
+            }
+        }
+        else {
+            $results[0] = exec_command($command);
+            chomp $results[0];
+        }
+        if ($results[0] ne $backup_path){
+            printlog("ERROR", ARCHDELETE_MS0021, $backup_path);
+        }
+        my $backup_label = $backup_path."\/backup_label";
+        $command = "$CAT $backup_label";
+        if ($backup_node ne 'localhost'){
+            @results = ssh_exec_command($ssh_info_backup_node, $command, "NO_EXIT");
+            if (defined($results[2])){
+                printlog("ERROR", ARCHDELETE_MS0046);
+            }
+        }
+        else {
+            $results[0] = exec_command($command);
+        }
+        my @backup_label_strings = split(/\n/, $results[0]);
+        $backup_wal = get_start_wal_filename($backup_label, @backup_label_strings);
+        printlog("LOG", ARCHDELETE_MS0023, $backup_wal);
+    }
+
+    # 自身のノードの pgdata の状態を取得
+    # pg_controldata コマンドは "C" ロケールにしてから実行
+    printlog("LOG", ARCHDELETE_MS0024, $node_value{'my_node'}, $dbcluster_path);
+    my $my_wal = '';
+
+    if ($exec_user eq "root") {
+        $result = exec_command("$SU - $pg_command_user -c \"export LANG=C; $command_path{'pg_controldata'} $dbcluster_path\"");
+    }
+    else{
+        $result = exec_command("export LANG=C; $command_path{'pg_controldata'} $dbcluster_path");
+    }
+    if ($result ne ''){
+        my @my_controldata_strings = split(/\n/, $result);
+        $my_wal = get_recoverywal(@my_controldata_strings);
+        printlog("LOG", ARCHDELETE_MS0023, $my_wal);
+    }
+    else{
+        printlog("ERROR", ARCHDELETE_MS0025);
+    }
+
+    # 相手のノードの pgdata の状態を取得
+    # pg_controldata コマンドは "C" ロケールにしてから実行
+    printlog("LOG", ARCHDELETE_MS0026, $node_value{'another_node'}, $dbcluster_path);
+    my $another_wal = '';
+
+    if ($exec_user eq "root") {
+        @results = ssh_exec_command($ssh_info, "$SU - $pg_command_user -c \"export LANG=C; $command_path{'pg_controldata'} $dbcluster_path\"");
+    }
+    else{
+        @results = ssh_exec_command($ssh_info, "export LANG=C; $command_path{'pg_controldata'} $dbcluster_path");
+    }
+    if ($results[0] ne ''){
+        my @another_controldata_strings = split(/\n/, $results[0]);
+        $another_wal = get_recoverywal(@another_controldata_strings);
+        printlog("LOG", ARCHDELETE_MS0023, $another_wal);
+    }
+    else{
+        printlog("ERROR", ARCHDELETE_MS0025);
+    }
+
+    ### 削除基準の WAL の算出 ###
+    # 削除基準は、指定したベースバックアップ、自身のノードの PGDATA 、相手先のノードの PGDATA の
+    # リカバリに必要な最初の WAL ファイルの中で一番小さいファイルを選ぶ
+    printlog("LOG", ARCHDELETE_MS0027);
+
+    my $base_wal = '';
+    my @compare_list = ($backup_wal, $my_wal, $another_wal);
+    foreach my $wal (@compare_list){
+        if ($wal ne ''){
+            if ($base_wal eq ''){
+                $base_wal = $wal;
+            }
+            elsif ($wal lt $base_wal){
+                $base_wal = $wal;
+            }
+        }
+    }
+    if ($base_wal eq ''){
+        printlog("LOG", ARCHDELETE_MS0028);
+        exit(0);
+    }
+    else{
+        printlog("LOG", ARCHDELETE_MS0029, $base_wal);
+    }
+
+    ### アーカイブファイルリストの作成 ###
+    if ($mode eq "mv"){
+        printlog("LOG", ARCHDELETE_MS0045);
+    } else {
+        printlog("LOG", ARCHDELETE_MS0030);
+    }
+
+    my @file_list = ();
+    opendir(DIR, $archive_dir) or printlog("ERROR", ARCHDELETE_MS0031, $archive_dir);
+    while (my $archive_file = readdir DIR){
+        # archive xlogfile name format : <xlogfile name>
+        # <xlogfile name> : <TimeLineID><startxlogfile name>
+        # <TimeLineID>は8桁の16進数
+        # <startxlogfile name>は16桁の16進数
+        #
+        # archive partialfile name format : <partialfile name>
+        # <partialfile name>: <xlogfile name>.partial
+        #
+        # archive historyfile name format : <historyfile name>
+        # <historyfile name>: <TimeLineID>.history
+        #
+        # archive backupfile name format : <backupfile name>
+        # <backupfile name> : <xlogfile name>.<xlog location>.backup
+        # <xlog location>は8桁の16進数
+        # <TimeLineID>は8桁の16進数
+        if ($archive_file =~ /^[0-9A-F]{24}(\.partial)?$/){
+            push(@file_list, $archive_file);
+            next;
+        }
+        if ($archive_file =~ /^[0-9A-F]{8}\.history$/){
+            push(@file_list, $archive_file);
+            next;
+        }
+        if ($archive_file =~ /^[0-9A-F]{24}\.[0-9A-F]{8}\.backup$/){
+            push(@file_list, $archive_file);
+            next;
+        }
+    }
+    closedir(DIR);
+
+    # アーカイブ削除対象の算出
+    
+    # historyfile name format : <TimeLineID>.history
+    # <TimeLineID>は8桁の16進数
+    $base_wal =~ /^([0-9A-F]{8})/;
+    my $base_history = $1;
+    my @remove_list = ();
+    foreach my $file (@file_list){
+        if ($file =~ /^[0-9A-F]{8}\.history$/) {
+            if ($file lt $base_history){
+                printlog("LOG", ARCHDELETE_MS0032, $file);
+                push(@remove_list, $file);
+            }
+        }
+        elsif ($file lt $base_wal){
+            printlog("LOG", ARCHDELETE_MS0032, $file);
+            push(@remove_list, $file);
+        }
+    }
+    if (!@remove_list){
+        printlog("LOG", ARCHDELETE_MS0033);
+        exit(0);
+    }
+
+    # アーカイブログの削除
+    if ($mode eq "mv"){
+        my ($sec, $min, $hour, $mday, $mon, $year) = localtime(time());
+        my $date = sprintf("%04d%02d%02d_%02d%02d%02d", $year+1900, $mon+1, $mday,
+                            $hour, $min, $sec);
+        my $move_dir = $archive_dir."/".$date;
+        if (-d $move_dir){
+            printlog("ERROR", ARCHDELETE_MS0034, $move_dir);
+        }
+        mkdir($move_dir, 0700) or printlog("ERROR", ARCHDELETE_MS0035, $move_dir);
+        chown(26, 26, $move_dir) or printlog("ERROR", ARCHDELETE_MS0036, $move_dir);
+        printlog("LOG", ARCHDELETE_MS0037, $move_dir);
+        
+        foreach my $move_file (@remove_list){
+            my $move_path = $archive_dir."/".$move_file;
+            rename($move_path, $move_dir."/".$move_file) or printlog("ERROR", ARCHDELETE_MS0038, $move_path);
+            printlog("LOG", ARCHDELETE_MS0039, $move_file);
+        }
+
+        printlog("LOG", ARCHDELETE_MS0040, $move_dir);
+    }
+    else {
+        foreach my $remove_file (@remove_list){
+            my $remove_path = $archive_dir."/".$remove_file;
+            unlink($remove_path) or printlog("ERROR", ARCHDELETE_MS0041, $remove_path);
+            printlog("LOG", ARCHDELETE_MS0042, $remove_file);
+        }
+        printlog("LOG", ARCHDELETE_MS0043);
+    }
+    exit(0);
+}

@@ -1,0 +1,1139 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang xml:lang>
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>PG-REX運用補助ツール 15 利用マニュアル</title>
+  <style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+
+ul.task-list[class]{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+font-size: inherit;
+width: 0.8em;
+margin: 0 0.8em 0.2em -1.6em;
+vertical-align: middle;
+}
+.display.math{display: block; text-align: center; margin: 0.5rem auto;}
+</style>
+  <style type="text/css">@charset "UTF-8";
+pre, dl, ol, p, blockquote { line-height:130%; }
+blockquote { margin-left:32px; }
+body,td {
+color:black;
+background-color:white;
+margin-left:2%;
+margin-right:2%;
+font-size:100%;
+font-family:verdana, arial, helvetica, Sans-Serif;
+}
+a:link {
+color:#215dc6;
+background-color:inherit;
+text-decoration:none;
+}
+a:active {
+color:#215dc6;
+background-color:#CCDDEE;
+text-decoration:none;
+}
+a:visited {
+color:#a63d21;
+background-color:inherit;
+text-decoration:none;
+}
+a:hover {
+color:#215dc6;
+background-color:#CCDDEE;
+text-decoration:underline;
+}
+h1, h2 {
+font-family:verdana, arial, helvetica, Sans-Serif;
+color:inherit;
+background-color:#DDEEFF;
+padding:.3em;
+border:0px;
+margin:0px 0px .5em 0px;
+}
+h3 {
+font-family:verdana, arial, helvetica, Sans-Serif;
+border-bottom: 3px solid #DDEEFF;
+border-top: 1px solid #DDEEFF;
+border-left: 10px solid #DDEEFF;
+border-right: 5px solid #DDEEFF;
+color:inherit;
+background-color:#FFFFFF;
+padding:.3em;
+margin:0px 0px .5em 0px;
+}
+h4 {
+font-family:verdana, arial, helvetica, Sans-Serif;
+border-left: 18px solid #DDEEFF;
+color:inherit;
+background-color:#FFFFFF;
+padding:.3em;
+margin:0px 0px .5em 0px;
+}
+h5, h6 {
+font-family:verdana, arial, helvetica, Sans-Serif;
+color:inherit;
+background-color:#DDEEFF;
+padding:.3em;
+border:0px;
+margin:0px 0px .5em 0px;
+}
+h1.title {
+font-size: 30px;
+font-weight:bold;
+background-color:transparent;
+padding: 12px 0px 0px 0px;
+border: 0px;
+margin: 12px 0px 0px 0px;
+}
+dt {
+font-weight:bold;
+margin-top:1em;
+margin-left:1em;
+}
+pre {
+border-top:#DDDDEE 1px solid;
+border-bottom:#888899 1px solid;
+border-left:#DDDDEE 1px solid;
+border-right:#888899 1px solid;
+padding:.5em;
+margin-left:1em;
+margin-right:2em;
+white-space:pre;
+color:black;
+background-color:#F0F8FF;
+}
+img {
+border:none;
+vertical-align:middle;
+}
+ul {
+margin-top:.5em;
+margin-bottom:.5em;
+line-height:130%;
+}
+em { font-style:italic; }
+strong { font-weight:bold; }
+thead td.style_td,
+tfoot td.style_td {
+color:inherit;
+background-color:#D0D8E0;
+}
+thead th.style_th,
+tfoot th.style_th {
+color:inherit;
+background-color:#E0E8F0;
+}
+.style_table {
+padding:0px;
+border:0px;
+margin:auto;
+text-align:left;
+color:inherit;
+background-color:#ccd5dd;
+}
+.style_th {
+padding:5px;
+margin:1px;
+text-align:center;
+color:inherit;
+background-color:#EEEEEE;
+}
+.style_td {
+padding:5px;
+margin:1px;
+color:inherit;
+background-color:#EEF5FF;
+}
+ul.list1 { list-style-type:disc; }
+ul.list2 { list-style-type:circle; }
+ul.list3 { list-style-type:square; }
+ol.list1 { list-style-type:decimal; }
+ol.list2 { list-style-type:lower-roman; }
+ol.list3 { list-style-type:lower-alpha; }
+div.ie5 { text-align:center; }
+span.noexists {
+color:inherit;
+background-color:#FFFACC;
+}
+.small { font-size:80%; }
+.super_index {
+color:#DD3333;
+background-color:inherit;
+font-weight:bold;
+font-size:60%;
+vertical-align:super;
+}
+a.note_super {
+color:#DD3333;
+background-color:inherit;
+font-weight:bold;
+font-size:60%;
+vertical-align:super;
+}
+div.jumpmenu {
+font-size:60%;
+text-align:right;
+}
+hr.full_hr {
+border-style:ridge;
+border-color:#333333;
+border-width:1px 0px;
+}
+hr.note_hr {
+width:90%;
+border-style:ridge;
+border-color:#333333;
+border-width:1px 0px;
+text-align:center;
+margin:1em auto 0em auto;
+}
+span.size1 {
+font-size:xx-small;
+line-height:130%;
+text-indent:0px;
+display:inline;
+}
+span.size2 {
+font-size:x-small;
+line-height:130%;
+text-indent:0px;
+display:inline;
+}
+span.size3 {
+font-size:small;
+line-height:130%;
+text-indent:0px;
+display:inline;
+}
+span.size4 {
+font-size:medium;
+line-height:130%;
+text-indent:0px;
+display:inline;
+}
+span.size5 {
+font-size:large;
+line-height:130%;
+text-indent:0px;
+display:inline;
+}
+span.size6 {
+font-size:x-large;
+line-height:130%;
+text-indent:0px;
+display:inline;
+}
+span.size7 {
+font-size:xx-large;
+line-height:130%;
+text-indent:0px;
+display:inline;
+}
+
+strong.word0 {
+background-color:#FFFF66;
+color:black;
+}
+strong.word1 {
+background-color:#A0FFFF;
+color:black;
+}
+strong.word2 {
+background-color:#99FF99;
+color:black;
+}
+strong.word3 {
+background-color:#FF9999;
+color:black;
+}
+strong.word4 {
+background-color:#FF66FF;
+color:black;
+}
+strong.word5 {
+background-color:#880000;
+color:white;
+}
+strong.word6 {
+background-color:#00AA00;
+color:white;
+}
+strong.word7 {
+background-color:#886800;
+color:white;
+}
+strong.word8 {
+background-color:#004699;
+color:white;
+}
+strong.word9 {
+background-color:#990099;
+color:white;
+}
+
+.edit_form { clear:both; }
+
+div#header {
+padding:0px;
+margin:0px;
+}
+div#navigator {
+clear:both;
+padding:4px 0px 0px 0px;
+margin:0px;
+}
+td.menubar {
+width:9em;
+vertical-align:top;
+}
+div#menubar {
+width:9em;
+padding:0px;
+margin:4px;
+word-break:break-all;
+font-size:90%;
+overflow:hidden;
+}
+div#menubar ul {
+margin:0px 0px 0px .5em;
+padding:0px 0px 0px .5em;
+}
+div#menubar ul li { line-height:110%; }
+div#menubar h4 { font-size:110%; }
+div#body {
+padding:0px;
+margin:0px 0px 0px .5em;
+}
+div#note {
+clear:both;
+padding:0px;
+margin:0px;
+}
+div#attach {
+clear:both;
+padding:0px;
+margin:0px;
+}
+div#toolbar {
+clear:both;
+padding:0px;
+margin:0px;
+text-align:right;
+}
+div#lastmodified {
+font-size:80%;
+padding:0px;
+margin:0px;
+}
+div#related {
+font-size:80%;
+padding:0px;
+margin:16px 0px 0px 0px;
+}
+div#footer {
+font-size:70%;
+padding:0px;
+margin:16px 0px 0px 0px;
+}
+div#banner {
+float:right;
+margin-top:24px;
+}
+div#preview {
+color:inherit;
+background-color:#F5F8FF;
+}
+img#logo {
+float:left;
+margin-right:20px;
+}
+
+.anchor {}
+.anchor_super {
+font-size:xx-small;
+vertical-align:super;
+}
+
+br.spacer {}
+
+.style_calendar {
+padding:0px;
+border:0px;
+margin:3px;
+color:inherit;
+background-color:#CCD5DD;
+text-align:center;
+}
+.style_td_caltop {
+padding:5px;
+margin:1px;
+color:inherit;
+background-color:#EEF5FF;
+font-size:80%;
+text-align:center;
+}
+.style_td_today {
+padding:5px;
+margin:1px;
+color:inherit;
+background-color:#FFFFDD;
+text-align:center;
+}
+.style_td_sat {
+padding:5px;
+margin:1px;
+color:inherit;
+background-color:#DDE5FF;
+text-align:center;
+}
+.style_td_sun {
+padding:5px;
+margin:1px;
+color:inherit;
+background-color:#FFEEEE;
+text-align:center;
+}
+.style_td_blank {
+padding:5px;
+margin:1px;
+color:inherit;
+background-color:#EEF5FF;
+text-align:center;
+}
+.style_td_day {
+padding:5px;
+margin:1px;
+color:inherit;
+background-color:#EEF5FF;
+text-align:center;
+}
+.style_td_week {
+padding:5px;
+margin:1px;
+color:inherit;
+background-color:#DDE5EE;
+font-size:80%;
+font-weight:bold;
+text-align:center;
+}
+
+div.calendar_viewer {
+color:inherit;
+background-color:inherit;
+margin-top:20px;
+margin-bottom:10px;
+padding-bottom:10px;
+}
+span.calendar_viewer_left {
+color:inherit;
+background-color:inherit;
+float:left;
+}
+span.calendar_viewer_right {
+color:inherit;
+background-color:inherit;
+float:right;
+}
+
+.clear {
+margin:0px;
+clear:both;
+}
+
+div.counter { font-size:70%; }
+
+span.diff_added {
+color:blue;
+background-color:inherit;
+}
+span.diff_removed {
+color:red;
+background-color:inherit;
+}
+
+hr.short_line {
+text-align:center;
+width:80%;
+border-style:solid;
+border-color:#333333;
+border-width:1px 0px;
+}
+
+h5.side_label { text-align:center; }
+
+ul.navi {
+margin:0px;
+padding:0px;
+text-align:center;
+}
+li.navi_none {
+display:inline;
+float:none;
+}
+li.navi_left {
+display:inline;
+float:left;
+text-align:left;
+}
+li.navi_right {
+display:inline;
+float:right;
+text-align:right;
+}
+
+span.comment_date { font-size:x-small; }
+span.new1 {
+color:red;
+background-color:transparent;
+font-size:x-small;
+}
+span.new5 {
+color:green;
+background-color:transparent;
+font-size:xx-small;
+}
+
+span.counter { font-size:70%; }
+ul.popular_list {
+}
+
+ul.recent_list {
+}
+
+div.img_margin {
+margin-left:32px;
+margin-right:32px;
+}
+
+td.vote_label {
+color:inherit;
+background-color:#FFCCCC;
+}
+td.vote_td1 {
+color:inherit;
+background-color:#DDE5FF;
+}
+td.vote_td2 {
+color:inherit;
+background-color:#EEF5FF;
+}
+table {
+background: #f9f9f9;
+border: 1px solid #aaa;
+border-collapse: collapse;
+}
+th, td {
+border: 1px solid #aaa;
+padding: 0.2em;
+}
+thead th {
+background: #f2f2f2;
+text-align: center;
+}
+tbody th {
+background: #f2f2f2;
+text-align: left;
+}
+div.index {
+float:right;
+border:thin solid black;
+background-color: white;
+padding-top: 0.2em;
+padding-bottom: 0.2em;
+padding-left: 0em;
+padding-right: 1em;
+margin-left: 0.5em;
+}
+div.index ol { counter-reset: item; }
+div.index li { display: block; }
+div.index li:before {
+content: counters(item, ".") ". ";
+counter-increment: item;
+}
+</style>
+  <!--[if lt IE 9]>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script>
+  <![endif]-->
+</head>
+<body>
+<h1 id="pg-rex運用補助ツール-15-利用マニュアル">PG-REX運用補助ツール 15
+利用マニュアル</h1>
+<h2 id="目次">目次</h2>
+<ul>
+<li><a href="#運用補助ツールとは">運用補助ツールとは?</a></li>
+<li><a href="#導入方法">導入方法</a></li>
+<li><a href="#コマンドリファレンス">コマンドリファレンス</a></li>
+<li><a href="#設定ファイル">設定ファイル</a></li>
+<li><a href="#使用上の注意と制約">使用上の注意と制約</a></li>
+<li><a href="#よくあるQA">よくあるQ&amp;A</a></li>
+<li><a href="#PG-REX運用補助ツール14からの変更点">PG-REX運用補助ツール
+14からの変更点</a></li>
+</ul>
+<h2 id="運用補助ツールとは">運用補助ツールとは?</h2>
+<p>PG-REX運用補助ツールとは、PG-REXの運用手順の簡易化を目的とした以下のコマンド群です。</p>
+<h3 id="機能概要">機能概要</h3>
+<p>各コマンドの概要を以下に示します。</p>
+<ol type="1">
+<li><p>pg-rex_primary_start</p>
+<p>本コマンドを実行したノードで、PG-REXをPrimaryとして起動する。</p></li>
+<li><p>pg-rex_standby_start</p>
+<p>本コマンドを実行したノードで、PG-REXをStandbyとして起動する。</p></li>
+<li><p>pg-rex_stop</p>
+<p>PG-REXのPrimaryまたはStandbyを停止する。</p></li>
+<li><p>pg-rex_archivefile_delete</p>
+<p>データベースの復旧に必要のないアーカイブログを移動または削除する。</p></li>
+<li><p>pg-rex_switchover</p>
+<p>PG-REXのノード切り替えを実施する。</p></li>
+</ol>
+<h2 id="導入方法">導入方法</h2>
+<h3 id="インストール">インストール</h3>
+<h4 id="動作確認済み環境">動作確認済み環境</h4>
+<ul>
+<li>OS : Red Hat Enterprise Linux 8.8</li>
+<li>PG-REX : 15
+<ul>
+<li>DBMS : PostgreSQL 15.4</li>
+<li>HA : Pacemaker 2.1.5-8</li>
+</ul></li>
+</ul>
+<h4 id="パッケージのインストール">パッケージのインストール</h4>
+<p>PG-REX運用補助ツールを使用するためにインストール必須のRPMパッケージを以下に示します。</p>
+<ol type="1">
+<li>pg-rex_operation_tools_script-15.1-1.el8.noarch.rpm</li>
+<li>IO_Tty-1.11-1.el8.x86_64.rpm</li>
+<li>Net_OpenSSH-0.62-1.el8.x86_64.rpm</li>
+</ol>
+<p>※バージョンは適宜読み替えてください。</p>
+<p>PG-REX運用補助ツールのRPMをインストールします。インストールは以下の順序で行います。</p>
+<pre><code># dnf install pg-rex_operation_tools_script-15.1-1.el8.noarch.rpm IO_Tty-1.11-1.el8.x86_64.rpm Net_OpenSSH-0.62-1.el8.x86_64.rpm</code></pre>
+<p>PG-REX運用補助ツールのRPMパッケージをインストールすると、コマンドと設定ファイルは以下のように配置されます。</p>
+<pre><code>/usr
+   └-local
+      └-bin
+         └-pg-rex_primary_start
+         └-pg-rex_standby_start
+         └-pg-rex_stop
+         └-pg-rex_archivefile_delete
+         └-pg-rex_switchover
+
+/etc
+   └- pg-rex_tools.conf</code></pre>
+<h4 id="設定ファイルの編集">設定ファイルの編集</h4>
+<p>環境にあわせて、<code>/etc/pg-rex_tools.conf</code>の設定を行います。各項目の詳細は<a href="#設定ファイル">設定ファイル</a>を参照してください。設定例を以下に示します。</p>
+<pre><code>$ cat /etc/pg-rex_tools.conf
+D_LAN_IPAddress = 192.168.2.1 , 192.168.2.2
+IC_LAN_IPAddress = (192.168.1.1, 192.168.1.2) , (192.168.3.1, 192.168.3.2)
+Archive_dir = /dbfp/pgarch/arc1
+IPADDR_STANDBY = enable
+PGPATH = /usr/pgsql-15/bin
+PEER_NODE_SSH_PASS_MODE = passfile
+PEER_NODE_SSH_PASS_FILE = /root/.pgrex/peer_passwd
+BACKUP_NODE_SSH_PASS_MODE = passfile
+BACKUP_NODE_SSH_PASS_FILE = /root/.pgrex/bkup_passwd
+PG_REX_Primary_ResourceID = pgsql-clone
+PG_REX_Primitive_ResourceID = pgsql
+IPADDR_PRIMARY_ResourceID = ipaddr-primary
+IPADDR_REPLICATION_ResourceID = ipaddr-replication
+IPADDR_STANDBY_ResourceID = ipaddr-standby
+PING_ResourceID = ping-clone
+STONITH_ResourceID = fence1-ipmilan , fence2-ipmilan
+HACLUSTER_NAME = pgrex_hacluster</code></pre>
+<h4 id="ネットワーク接続の登録">ネットワーク接続の登録</h4>
+<p>PG-REX運用補助ツールが相手ノードの操作や確認をD-LANを使用して行うため、事前に両ノードのrootユーザの<code>.ssh/known_hosts</code>に相手先のD-LANのIPアドレスに対する接続登録をする必要があります。</p>
+<pre><code># ssh 192.168.2.2   ←相手先のD-LANのIPアドレスを指定
+The authenticity of host &#39;192.168.2.2 (192.168.2.2)&#39; can&#39;t be established.
+ECDSA key fingerprint is *******
+Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+↑[yes]を入力し[Enter]キーを押下
+Warning: Permanently added &#39;192.168.2.2&#39; (ECDSA) to the list of known hosts.
+root@192.168.2.2&#39;s password:    ←[Ctrl]キーと[C]キーを同時に押下</code></pre>
+<h3 id="アンインストール">アンインストール</h3>
+<p>RPMパッケージのアンインストールを行います。</p>
+<pre><code># dnf remove pg-rex_operation_tools_script-15.1-1.el8.noarch IO_Tty-1.11-1.el8.x86_64 Net_OpenSSH-0.62-1.el8.x86_64</code></pre>
+<h2 id="コマンドリファレンス">コマンドリファレンス</h2>
+<ol type="1">
+<li><a href="#pg-rex_primary_start">pg-rex_primary_start</a></li>
+<li><a href="#pg-rex_standby_start">pg-rex_standby_start</a></li>
+<li><a href="#pg-rex_stop">pg-rex_stop</a></li>
+<li><a href="#pg-rex_archivefile_delete">pg-rex_archivefile_delete</a></li>
+<li><a href="#pg-rex_switchover">pg-rex_switchover</a></li>
+</ol>
+<h3 id="pg-rex_primary_start">pg-rex_primary_start</h3>
+<h5 id="概要">概要</h5>
+<p>本コマンドを実行したノードで、PG-REXをPrimaryとして起動します。</p>
+<h5 id="形式">形式</h5>
+<pre><code>pg-rex_primary_start [-h][-v][XmlFilePath]</code></pre>
+<h5 id="引数">引数</h5>
+<ul>
+<li><p>-h, –help</p>
+<p>Usageを表示して終了します</p></li>
+<li><p>-v, –version</p>
+<p>バージョン情報を表示して終了します</p></li>
+<li><p><em>XmlFilePath</em></p>
+<p>リソース定義xmlファイルのファイルパスを指定します(初回起動時に使用する)</p></li>
+</ul>
+<h5 id="実行例">実行例</h5>
+<ul>
+<li>引数なしの実行例</li>
+</ul>
+<pre><code># pg-rex_primary_start
+root@192.168.2.2&#39;s password:
+パスワードが入力されました
+1. Pacemaker および Corosync が停止していることを確認
+...[OK]
+2. 稼働中の Primary が存在していないことを確認
+...[OK]
+3. Primary として稼働することが出来るかを確認
+...[OK]
+4. 起動禁止フラグの存在を確認
+...[OK]
+5. Pacemaker 起動
+...[OK]
+6. Primary の起動確認
+...[OK]
+ノード(pgrex01)が Primary として起動しました</code></pre>
+<ul>
+<li>引数ありの実行例</li>
+</ul>
+<pre><code># pg-rex_primary_start pm_pcsgen_env.xml
+root@192.168.2.2&#39;s password:
+パスワードが入力されました
+1. Pacemaker および Corosync が停止していることを確認
+...[OK]
+2. 稼働中の Primary が存在していないことを確認
+...[OK]
+3. 起動禁止フラグの存在を確認
+...[OK]
+既に HAクラスタ があります
+再作成しても宜しいでしょうか？ (y/N) y
+4. HAクラスタ の破棄
+...[OK]
+5. HAクラスタ の作成
+...[OK]
+6. Pacemaker 起動
+...[OK]
+7. リソース定義 xml ファイルの反映
+...[OK]
+8. Primary の起動確認
+...[OK]
+ノード(pgrex01)が Primary として起動しました</code></pre>
+<h3 id="pg-rex_standby_start">pg-rex_standby_start</h3>
+<h5 id="概要-1">概要</h5>
+<p>本コマンドを実行したノードで、PG-REXをStandbyとして起動します。</p>
+<h5 id="形式-1">形式</h5>
+<pre><code>pg-rex_standby_start [[-n] [-r] [-b] | -c] [-d] [-s] [-h] [-v]</code></pre>
+<h5 id="引数-1">引数</h5>
+<ul>
+<li><p>-n, –normal</p>
+<p>現在のDBクラスタを使用してStandby を起動します</p></li>
+<li><p>-r, –rewind</p>
+<p>現在のDBクラスタに相手 (Primary)
+ノードと同期したうえでレプリケーションを行えるように、巻き戻し後、Standbyを起動します</p></li>
+<li><p>-b, –basebackup</p>
+<p>相手ノードをPrimaryとしてベースバックアップを取得後、Standbyとして起動します</p></li>
+<li><p>-d, –dry-run</p>
+<p>データの変更とノードの起動の実行を伴わず、表示のみを行います</p></li>
+<li><p>-c, –check-only</p>
+<p>DBクラスタの状態確認までを実施します</p></li>
+<li><p>-s, –shared-archive-directory</p>
+<p>Primary と Standby
+でアーカイブディレクトリを共有しているものとして動作します</p></li>
+<li><p>-h, –help</p>
+<p>Usageを表示して終了します</p></li>
+<li><p>-v, –version</p>
+<p>バージョン情報を表示して終了します</p></li>
+</ul>
+<h5 id="実行例-1">実行例</h5>
+<pre><code># pg-rex_standby_start
+root@192.168.2.1&#39;s password:
+パスワードが入力されました
+1. Pacemaker および Corosync が停止していることを確認
+...[OK]
+2. 稼働中の Primary が存在していることを確認
+...[OK]
+3. 起動禁止フラグが存在しないことを確認
+...[OK]
+4. DB クラスタの状態を確認
+4.1 現在のDBクラスタのまま起動が可能か確認
+DB クラスタが存在していません
+...[NG]
+4.2 巻き戻しを実行することで起動が可能か確認
+DB クラスタが存在していません
+...[NG]
+4.3 ベースバックアップを取得することが可能か確認
+...[OK]
+
+以下の方法で起動が可能です
+b) ベースバックアップを取得してStandbyを起動
+q) Standbyの起動を中止する
+起動方法を選択してください(b/q) b
+5. IC-LAN が接続されていることを確認
+...[OK]
+6. Primary からベースバックアップ取得
+22631/22631 kB (100%), 1/1 tablespace
+NOTICE:  pg_stop_backup complete, all required WAL segments have been archived
+...[OK]
+7. Primary のアーカイブディレクトリと同期
+000000010000000000000002.partial
+00000002.history
+000000020000000000000003.00000028.backup
+000000010000000000000001
+000000020000000000000002
+000000020000000000000003
+...[OK]
+8. Standby の起動 (アーカイブリカバリ対象 WAL セグメント数: 1)
+...[OK]
+9. Standby の起動確認
+...[OK]
+ノード(pgrex02)が Standby として起動しました</code></pre>
+<h3 id="pg-rex_stop">pg-rex_stop</h3>
+<h5 id="概要-2">概要</h5>
+<p>本コマンドを実行したノードで、PG-REXのPrimaryまたはStandbyを停止します。</p>
+<h5 id="形式-2">形式</h5>
+<pre><code>pg-rex_stop [-f][-h][-v]</code></pre>
+<h5 id="引数-2">引数</h5>
+<ul>
+<li><p>-f, –fast</p>
+<p>停止前にCHECKPOINTとsyncコマンドを実行しません</p></li>
+<li><p>-h, –help</p>
+<p>Usageを表示して終了します</p></li>
+<li><p>-v, –version</p>
+<p>バージョン情報を表示して終了します</p></li>
+</ul>
+<h5 id="実行例-2">実行例</h5>
+<pre><code># pg-rex_stop
+Primary を停止します
+1. Pacemaker 停止
+...[OK]
+2. Pacemaker 停止確認
+...[OK]
+PG-REX の Primary (pgrex01)を停止しました</code></pre>
+<h3 id="pg-rex_archivefile_delete">pg-rex_archivefile_delete</h3>
+<h5 id="概要-3">概要</h5>
+<p>本コマンドを実行したノードで不要なアーカイブログを削除します。不要なアーカイブログとは、PG-REXのPrimaryとStandbyのDBクラスタ、およびコマンド実行時に指定したベースバックアップのリカバリに不要なアーカイブログです。指定したベースバックアップの取得時点よりも過去に取得したベースバックアップは使用できなくなることに注意してください。PrimaryとStandbyの両方がSSH接続可能である必要があります。</p>
+<p>コマンド実行時にベースバックアップの場所の指定を省略した場合は、対話形式での指定となります。対話形式でも省略した場合は、PrimaryとStandbyのみを対象にして不要なアーカイブログを削除します。ベースバックアップの場所がリモートサーバの場合は、環境設定ファイルのBACKUP_NODE_SSH_PASS_MODEに設定した認証方式でリモートサーバにアクセスします。</p>
+<p>本コマンドには、不要なアーカイブログを削除するモード(削除モード)と移動するモード(移動モード)があります。移動モードを指定した場合は、アーカイブログ格納ディレクトリ直下に現在日時のディレクトリを作成し、当該ディレクトリに不要なアーカイブログが移動されます。</p>
+<h5 id="形式-3">形式</h5>
+<pre><code>pg-rex_archivefile_delete {-m|-r}[-f][-D DBclusterFilepath][-h][-v] [[Hostname:]BasebackupPath]
+</code></pre>
+<h5 id="引数-3">引数</h5>
+<ul>
+<li><p>-m, –move</p>
+<p>移動モードで実行します</p></li>
+<li><p>-r, –remove</p>
+<p>削除モードで実行します</p>
+<p>※
+移動モードまたは削除モードはどちらか片方を必ず指定してください</p></li>
+<li><p>-f, –force</p>
+<p>アーカイブログの削除を問い合わせ無しで実行します</p></li>
+<li><p>-h, –help</p>
+<p>Usageを表示して終了します</p></li>
+<li><p>-v, –version</p>
+<p>バージョン情報を表示して終了します</p></li>
+<li><p>-D, –dbcluster=<em>DBclusterFilepath</em></p>
+<p>両ノードで使用しているDBクラスタの場所の絶対パスを指定します</p>
+<p>指定を省略した場合は、以下の優先度で値が適用されます</p>
+<ol type="1">
+<li>rootユーザでの実行の場合、リソース定義xmlの「pgdata」</li>
+<li>環境変数の「PGDATA」</li>
+</ol></li>
+<li><p><em>Hostname</em></p>
+<p>ベースバックアップが存在するリモートサーバを指定します</p>
+<p>Hostnameを省略した場合は”localhost”が適用されます</p></li>
+<li><p><em>BasebackupPath</em></p>
+<p>ベースバックアップの場所を絶対パスで指定します</p></li>
+</ul>
+<h5 id="実行例-3">実行例</h5>
+<ul>
+<li>移動モードでベースバックアップの指定をしない場合</li>
+</ul>
+<pre><code># pg-rex_archivefile_delete -m
+
+**** 1. 実行準備 ****
+移動モードで実行します
+ベースバックアップが存在するリモートサーバを入力してください
+(入力しなければ &quot;localhost&quot; を設定します)
+&gt;
+ベースバックアップの場所の絶対パスを入力してください
+(入力しなければバックアップ指定無しとして実行されアーカイブが削除されるため、
+以前に取得したベースバックアップが使用できなくなります)
+&gt;
+環境設定ファイル (pgrex_tools.conf) を読み込みます
+root@192.168.2.2&#39;s password:
+パスワードが入力されました
+両ノードの名前を取得します
+cib.xml ファイルを読み込みます
+ベースバックアップの場所を指定せずに実行すると、
+自身のノード &quot;pgrex01&quot; と相手のノード &quot;pgrex02&quot; の
+現時点の PGDATA &quot;/dbfp/pgdata/data&quot; を基準にしてアーカイブログを削除することになります
+アーカイブログを削除しますか (y/N) : y
+
+**** 2. WAL ファイル名の取得 ****
+自身のノード &quot;pgrex01&quot; の現時点の PGDATA &quot;/dbfp/pgdata/data&quot; からリカバリに必要な最初の WAL ファイル名を取得します
+&quot;00000002000000000000000C&quot;
+相手のノード &quot;pgrex02&quot; の現時点の PGDATA &quot;/dbfp/pgdata/data&quot; からリカバリに必要な最初の WAL ファイル名を取得します
+&quot;000000020000000000000003&quot;
+
+**** 3. 削除基準の算出 ****
+削除基準を &quot;000000020000000000000003&quot; としました
+
+**** 4. アーカイブログの移動 ****
+削除対象のリストに &quot;000000010000000000000002&quot; を追加します
+削除対象のリストに &quot;000000020000000000000002&quot; を追加します
+削除対象のリストに &quot;000000010000000000000001&quot; を追加します
+移動先ディレクトリ &quot;/dbfp/pgarch/arc1/20130826_163510&quot; を作成しました
+-- 移動 -- 000000010000000000000002
+-- 移動 -- 000000020000000000000002
+-- 移動 -- 000000010000000000000001
+アーカイブログの移動に成功しました
+移動モード実行のため、移動したファイルは&quot;/dbfp/pgarch/arc1/20130826_163510&quot; に格納されています</code></pre>
+<ul>
+<li>削除モードで、ベースバックアップを指定した場合</li>
+</ul>
+<pre><code># pg-rex_archivefile_delete -r pgrex03:/pgdata/backup_data
+
+**** 1. 実行準備 ****
+削除モードで実行します
+環境設定ファイル (pg-rex_tools.conf) を読み込みます
+root@192.168.2.2&#39;s password:
+パスワードが入力されました
+両ノードの名前を取得します
+cib.xml ファイルを読み込みます
+
+**** 2. WAL ファイル名の取得 ****
+指定されたバックアップからリカバリを行うために必要な最初の WAL ファイル名を取得します
+root@pgrex03&#39;s password:
+パスワードが入力されました
+&quot;000000020000000000000004&quot;
+自身のノード &quot;pgrex01&quot; の現時点の PGDATA &quot;/dbfp/pgdata/data&quot; からリカバリに必要な最初の WAL ファイル名を取得します
+&quot;000000020000000000000003&quot;
+相手のノード &quot;pgrex02&quot; の現時点の PGDATA &quot;/dbfp/pgdata/data&quot; からリカバリに必要な最初の WAL ファイル名を取得します
+&quot;00000002000000000000000C&quot;
+
+**** 3. 削除基準の算出 ****
+削除基準を &quot;000000020000000000000003&quot; としました
+
+**** 4. アーカイブログの削除 ****
+削除対象のリストに &quot;000000010000000000000001&quot; を追加します
+削除対象のリストに &quot;000000010000000000000002&quot; を追加します
+削除対象のリストに &quot;000000020000000000000002&quot; を追加します
+-- 削除 -- 000000010000000000000001
+-- 削除 -- 000000010000000000000002
+-- 削除 -- 000000020000000000000002
+アーカイブログの削除に成功しました</code></pre>
+<h3 id="pg-rex_switchover">pg-rex_switchover</h3>
+<h5 id="概要-4">概要</h5>
+<p>Standbyの再組み込み時にベースバックアップを取得せずにPG-REXのノード切り替えを実行します。ベースバックアップを取得しないことで、ノード切り替え時間の短縮を実現します。</p>
+<p>本コマンドは、PG-REXのPrimaryとStandbyのどちらのノードでも実行することができます。</p>
+<h5 id="形式-4">形式</h5>
+<pre><code>pg-rex_switchover [-h][-v]</code></pre>
+<h5 id="引数-4">引数</h5>
+<ul>
+<li><p>-h, –help</p>
+<p>Usageを表示して終了します</p></li>
+<li><p>-v, –version</p>
+<p>バージョン情報を表示して終了します</p></li>
+</ul>
+<h5 id="実行例-4">実行例</h5>
+<pre><code># pg-rex_switchover
+root@192.168.2.2&#39;s password:
+パスワードが入力されました
+**** 実行準備 ****
+1. 環境設定ファイル (pg-rex_tools.conf) の読み込みと両ノードの名前を取得
+...[OK]
+2. 現在およびノード切り替え後のHAクラスタ状態を確認
+
+[ 現在 / ノード切り替え後のHAクラスタ状態 ]
+ Primary : pgrex01 -&gt; pgrex02
+ Standby : pgrex02 -&gt; pgrex01
+
+ノード切り替え中は可用性が保証されません。
+ノード切り替えを実行してもよろしいでしょうか？ (y/N) y
+
+**** ノード切り替えを実行 ****
+3. Pacemaker の監視を停止
+...[OK]
+4. Primary (pgrex01) の PostgreSQL を停止
+...[OK]
+5. Pacemaker の監視を再開しノード切り替えを実行
+...[OK]
+6. pgrex02 が新 Primary になったことを確認
+
+**** pgrex02 が Primary として起動しました ****
+
+7. pgrex01 の Pacemaker を停止
+...[OK]
+8. pgrex01 で Standby を起動
+00000011000000000000000C
+00000012000000000000000E
+00000013.history
+
+**** pgrex01 が Standby として起動しました ****
+
+****************************************
+**** ノード切り替えが正常に完了しました ****
+****************************************
+
+[ 現在のHAクラスタ状態 ]
+ Primary : pgrex02
+ Standby : pgrex01</code></pre>
+<h2 id="設定ファイル">設定ファイル</h2>
+<p>PG-REX運用補助ツールで利用する設定ファイルについて以下に示します。</p>
+<ol type="1">
+<li>格納場所 : /etc</li>
+<li>ファイル名 : pg-rex_tools.conf</li>
+</ol>
+<h3 id="設定項目一覧">設定項目一覧</h3>
+<ul>
+<li>D_LAN_IPAddress
+<ul>
+<li><strong>両ノードのD-LANのIPアドレス</strong>を指定します。IPアドレスはカンマで区切って指定します。<strong>指定必須</strong>の項目です。</li>
+</ul></li>
+<li>IC_LAN_IPAddress
+<ul>
+<li><strong>IC-LAN系統ごとに括弧で囲ったIPアドレスの組</strong>を記述します。<strong>指定必須</strong>の項目です。
+<ul>
+<li>(IC-LAN1 アドレス1,IC-LAN1 アドレス2)[,(IC-LAN2 アドレス1 ,IC-LAN2
+アドレス2)]</li>
+</ul></li>
+</ul></li>
+<li>Archive_dir
+<ul>
+<li><strong>アーカイブディレクトリの絶対パス</strong>を指定します。<strong>指定必須</strong>の項目です。</li>
+</ul></li>
+<li>STONITH
+<ul>
+<li>STONITHの設定値は常に<strong>enable</strong>を指定します。</li>
+</ul></li>
+<li>IPADDR_STANDBY
+<ul>
+<li>Standby側接続用の仮想IPを使用する環境の場合は<strong>enable</strong>、それ以外の場合は<strong>disable</strong>を指定します。省略した場合は<strong>enable</strong>となります。</li>
+</ul></li>
+<li>PGPATH
+<ul>
+<li><strong>PostgreSQLコマンドへの絶対パス</strong>を指定します。設定を省略した場合はpostgresユーザログイン時に設定される環境変数のPATHからPostgreSQLコマンドへのパスを取得します。</li>
+</ul></li>
+<li>PEER_NODE_SSH_PASS_MODE
+<ul>
+<li><strong>manual</strong>、<strong>passfile</strong>、<strong>nopass</strong>のいずれかを指定します。運用補助ツールは実行時に相手ノードにsshで接続する場合があり、このパラメータでssh接続のパスワード取得方法を変更することができます。設定値はセキュリティの観点から<strong>manual</strong>を推奨します。<strong>指定必須</strong>の項目です。
+<ul>
+<li>manual ： パスワードを手動で入力する。</li>
+<li>passfile ：
+PEER_NODE_SSH_PASS_FILEに指定したファイル内のパスワードを参照する。</li>
+<li>nopass：公開鍵認証を使用する。</li>
+</ul></li>
+</ul></li>
+<li>PEER_NODE_SSH_PASS_FILE
+<ul>
+<li><strong>相手ノードへのssh接続に必要なパスワードのみが記述されたファイルの絶対パス</strong>を指定します。
+<strong>PEER_NODE_SSH_PASS_MODEにpassfileを指定している場合</strong>は、<strong>設定が必須</strong>となります。passfile以外を指定している場合、この設定は参照されません。</li>
+</ul></li>
+<li>BACKUP_NODE_SSH_PASS_MODE
+<ul>
+<li><strong>manual、passfile、nopass</strong>のいずれかを設定します。pg-rex_archivefile_deleteコマンドは実行時にDBクラスタのバックアップ格納先ノードにsshで接続する場合があり、このパラメータでssh接続のパスワード取得方法を変更することができます。設定値はセキュリティの観点から<strong>manual</strong>を推奨します。<strong>指定必須</strong>の項目です。
+<ul>
+<li>manual ： パスワードを手動で入力する。</li>
+<li>passfile ：BACKUP_NODE_SSH_
+PASS_FILEに指定したファイル内のパスワードを参照する。</li>
+<li>nopass ： 公開鍵認証を使用する。</li>
+</ul></li>
+</ul></li>
+<li>BACKUP_NODE_SSH_PASS_FILE
+<ul>
+<li><strong>DBクラスタのバックアップ格納先ノードへのssh接続に必要なパスワードのみが記述されたファイルの絶対パス</strong>を指定します。<strong>BACKUP_NODE_SSH_PASS_MODEにpassfileを指定している場合</strong>は、<strong>設定が必須</strong>となります。passfile以外を指定している場合、この設定は参照されません。</li>
+</ul></li>
+<li>PG_REX_Primary_ResourceID
+<ul>
+<li><strong>環境定義書のPromotableのリソースID</strong>を指定します。<strong>指定必須</strong>の項目です。</li>
+</ul></li>
+<li>PG_REX_Primitive_ResourceID
+<ul>
+<li><strong>環境定義書のPostgreSQL制御のリソースID</strong>を指定します。<strong>指定必須</strong>の項目です。</li>
+</ul></li>
+<li>IPADDR_PRIMARY_ResourceID
+<ul>
+<li>Primary側接続用の仮想IPの起動確認を行う場合、<strong>環境定義書の仮想IP定義のうちから、Primary側接続用のリソースID</strong>を指定します。</li>
+</ul></li>
+<li>IPADDR_REPLICATION_ResourceID
+<ul>
+<li>レプリケーション受付用の仮想IPの起動確認を行う場合、<strong>環境定義書の仮想IP定義のうちから、レプリケーション受付用のリソースID</strong>を指定します。</li>
+</ul></li>
+<li>IPADDR_STANDBY_ResourceID
+<ul>
+<li>Standby側接続用の仮想IPの起動確認を行う場合、<strong>環境定義書の仮想IP定義のうちから、Standby側接続用のリソースID</strong>を指定します。</li>
+</ul></li>
+<li>PING_ResourceID
+<ul>
+<li>PINGリソースの起動確認を行う場合、<strong>環境定義書のネットワーク監視のリソースID</strong>を指定します。複数指定する場合はカンマ区切りで指定します。</li>
+</ul></li>
+<li>STORAGE_MON_ResourceID
+<ul>
+<li>STORAGE-MON
+リソースの起動確認を行う場合、<strong>環境定義書のディスク監視のリソースID</strong>を指定します。</li>
+</ul></li>
+<li>STONITH_ResourceID
+<ul>
+<li>STONITHリソースの起動確認を行う場合、<strong>環境定義書のハードウェア制御STONITHプラグインのリソースID</strong>をカンマ区切りで2つ指定します。</li>
+</ul></li>
+<li>HACLUSTER_NAME
+<ul>
+<li><strong>Pacemakerで管理するHAクラスタ名</strong>を指定します。HAクラスタ名には英数字とアンダースコア,
+およびハイフンのみ使用可です。ただし先頭にはハイフンは使用できません。</li>
+</ul></li>
+</ul>
+<h2 id="使用上の注意と制約">使用上の注意と制約</h2>
+<p>PG-REX運用補助ツール利用時の制約を以下に示します。</p>
+<ol type="1">
+<li>pg-rex_switchoverによるノード切り替えでは、Primaryの停止後からPrimaryの切り替え（新Primaryの起動）が完了するまでの間は一時的にサービスが停止した状態となる。</li>
+<li>pg-rex_switchoverによるノード切り替えの実施中に、pg-rex_switchoverが異常終了した場合のHAクラスタ状態は不確定であり、サービスが停止している可能性がある。この場合、元の状態への復旧は自動で実施されないため、HAクラスタ状態を確認し、手動復旧を試みること。</li>
+<li>起動確認はPostgreSQLやIPaddr2、Ping、STONITHなどの固有のリソースにしか確認を行わないため、Apacheなど新しくリソースを追加したとしてもその確認を行わない。</li>
+<li>両ノードの状態確認にネットワークの通信を用いるので、ツールが使用するLAN（デフォルトはD-LAN）切断時は、それ以外のLANが繋がっていても実行に失敗する。</li>
+<li>PG-REXでインストールしたファイルのディレクトリ構成が2つのノードで同一であること。</li>
+<li>アーカイブログを圧縮する場合、圧縮方式に対応した拡張子を付与しなければならない。サポートする圧縮方式はgzip
+(拡張子.gz)のみである。</li>
+</ol>
+<h2 id="よくあるQA">よくあるQ&amp;A</h2>
+<p>PG-REX運用補助ツール利用時における、よくある質問について以下に示します。</p>
+<ul>
+<li>Q1. 運用補助ツールコマンドのタイムアウトの時間を変更したい。
+<ul>
+<li>pg-rex_primary_start、pg-rex_standby_start、pg-rex_stop、pg-rex_switchoverコマンドの起動/停止確認時間のタイムアウト値は300秒に設定してあります。これを変更したい場合は、/usr/local/bin配下にある上記コマンドの”my
+$timeout = 300”と記述されている箇所の数値(秒単位)を変更して下さい。</li>
+</ul></li>
+<li>Q2.
+Standby起動時にベースバックアップを取得しなくてよいパターンとは具体的にどういう場合か。
+<ul>
+<li>例えば、フェイルオーバ後に旧PrimaryをStandbyとして起動する場合や、Standbyを一旦停止して再び起動する場合はベースバックアップを取得する必要はありません。ただし、どちらの場合でもStandby起動時のPostgreSQLのリカバリに必要なWALファイルを消去していないことが前提となります。</li>
+</ul></li>
+<li>Q3.
+PG-REXでインストールするファイルのディレクトリ構成を2つのノードで異なる構成にしたい。
+<ul>
+<li>PG-REXではディレクトリ構成が2つのノードで同一であることを前提としています。ディレクトリ構成が両ノードで同一でない場合、運用補助ツールは正常に動作しません。</li>
+</ul></li>
+<li>Q4. 運用補助ツールが表示するメッセージに日本語と英語が混在する。
+<ul>
+<li>運用補助ツールではPostgreSQLのコマンドをpostgresユーザに切り替えて実行しています。そのため、PostgreSQLのコマンドが出力するメッセージはpostgresユーザの言語設定に沿って表示されます。</li>
+</ul></li>
+</ul>
+<h2 id="PG-REX運用補助ツール14からの変更点">PG-REX運用補助ツール
+14からの変更点</h2>
+<ul>
+<li><p>対応するPG-REXのバージョンは15です。</p></li>
+<li><p>PG-REX運用補助ツール 14.1と同様、PG-REX運用補助ツール
+15.1からstorage-monの起動確認を追加しました。</p></li>
+</ul>
+<hr />
+<p>Copyright (c) 2012-2023, NIPPON TELEGRAPH AND TELEPHONE
+CORPORATION</p>
+</body>
+</html>

@@ -1,0 +1,384 @@
+#!/usr/bin/perl
+#####################################################################
+# Function: pg-rex_primary_start
+#
+#
+# 概要:
+# PG-REX での Primary 起動実行ツール。
+# 手順の簡易化を目的として作成している。
+# 
+# 特記事項:
+# なし
+#
+# Copyright (c) 2012-2023, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+#
+#####################################################################
+package PGRex;
+
+use warnings;
+use strict;
+use sigtrap qw(die normal-signals error-signals);
+use Getopt::Long;
+use PGRex::command;
+use PGRex::common qw(pacemaker_online pgrex_failed_action primary_running
+                     vip_running stonith_running ping_running
+                     read_config read_cib exec_command
+                     get_pg_command_path get_ssh_passwd check_support_version
+                     check_user printlog check_dbcluster_access
+                     create_pid_file unlink_pid_file);
+
+BEGIN {
+    if ($ENV{'LANG'} =~ m/ja/i){
+        eval qq{
+            use PGRex::Po::ja;
+        };
+    }
+    else{
+        eval qq{
+            use PGRex::Po::en;
+        }
+    }
+
+	create_pid_file();
+};
+
+END {
+	unlink_pid_file();
+};
+
+$SIG{INT} = sub {
+    printlog("LOG", PRIMARYSTART_MS0001);
+};
+
+main();
+
+1;
+
+sub main{
+    my $help_mode = 0;
+    my $version_mode = 0;
+    my $config_path = CONFIG_PATH.CONFIG_FILENAME;
+    my %config_value;
+    my $cib_path = CIB_PATH.CIB_FILENAME;
+    my %my_cib_value;
+    my $hacf_path = HACF_PATH.HACF_FILENAME;
+    my $crm_path = "";
+    my %crm_value;
+    my @crm_check_key_list = ("tmpdir", "pgdata", "repuser");
+    my %node_value;
+    my %command_path;
+    my $pg_command_user = "postgres";
+    my $resource_id;
+    my $tmpdir = RA_TMPDIR;
+    my $dbcluster_dir;
+    my $pgsql_data_status;
+    my $timeout = 300;
+    my $monitor_delay = 10;
+    my $monitor_interval = 2;
+    my $wait_time = 0;
+    my $lock_file = "";
+    my $exit_code;
+    my $ssh_pass;
+    my $starting_resource = "";
+    my $result;
+    my $kill_when_no_data = 1;
+    my $operation_num = 1;
+    my $myself;
+
+    # 標準出力が途中で停止するのを防ぐ為に
+    # 標準出力のオートフラッシュを有効化
+    $| = 1;
+
+    # オプション解析
+    foreach ( @ARGV ){
+        if ( "$_" eq "-" || "$_" eq "--" ){
+            $help_mode = 1;
+        }
+    }
+    $exit_code = GetOptions('help'                => \$help_mode,
+                         'additional_information' => \$PGRex::common::additional_information_mode,
+                         'version'                => \$version_mode);
+
+    $myself = $0;
+    $myself =~ s/.*\///g;
+
+    if ($help_mode || !$exit_code){
+        printlog("VERSION", VERSIONINFO, $myself, VERSIONNUM);
+        print "\n";
+        printlog("USAGE", PRIMARYSTART_USAGE);
+        exit(0);
+    }
+    if ($version_mode){
+        printlog("VERSION", VERSIONINFO, $myself, VERSIONNUM);
+        exit(0);
+	}
+
+    # 引数の確認
+    if ($#ARGV >= 0){
+        $crm_path = $ARGV[0];
+        if (! -e $crm_path){
+            printlog("ERROR", PRIMARYSTART_MS0002);
+        }
+    }
+
+    # 実行ユーザの確認
+    check_user();
+
+    # 環境設定ファイルの読み込み
+    %config_value = read_config($config_path);
+
+    # PostgreSQL のコマンドパスを取得
+    %command_path = get_pg_command_path($config_value{'PGPATH'});
+
+    # Pacemaker と PostgreSQL がサポート対象バージョンであるかを確認
+    check_support_version($command_path{'postgres'});
+
+    ### スクリプト実行準備 ###
+
+    # ssh 接続の為の情報の取得
+    $ssh_pass = get_ssh_passwd($config_value{'Another_D_LAN_IPAddress'}, $config_value{'PEER_NODE_SSH_PASS_MODE'}, $config_value{'PEER_NODE_SSH_PASS_FILE'});
+    my $ssh_info = new Ssh_info();
+    $ssh_info->address("$config_value{'Another_D_LAN_IPAddress'}");
+    $ssh_info->user("root");
+    $ssh_info->pass("$ssh_pass");
+
+    # 引数に xml ファイルが指定されている場合は xml ファイルを読み込む
+    # そうでない場合は cib.xml ファイルを読み込む
+    if ($crm_path ne ""){
+        open (FILE, $crm_path) or printlog("ERROR", PRIMARYSTART_MS0004);
+
+        # tmpdir に指定してある値を取得
+        while (<FILE>){
+            my $key;
+            my $value;
+            if ($_ =~ /.*id=\"$config_value{'PG_REX_Primitive_ResourceID'}-instance_attributes-\S+\"/){
+                if ($_ =~ /\s+name=\"([^\"\s]+)\"/){
+                    $key = $1;
+                }
+                if ($_ =~ /\s+value=\"([^\"]+)\"/){
+                    $value = $1;
+                }
+                    $crm_value{$key} = $value;
+                }
+        }
+        close (FILE);
+
+        foreach my $key (@crm_check_key_list) {
+            if ($key ne "tmpdir" && (!exists($crm_value{$key}) || $crm_value{$key} eq '')){
+                printlog("ERROR", PRIMARYSTART_MS0033, $config_value{'PG_REX_Primitive_ResourceID'}, $key);
+            }
+        }
+
+        $dbcluster_dir = $crm_value{'pgdata'};
+    }
+    else {
+        %my_cib_value = read_cib($cib_path, $config_value{'PG_REX_Primitive_ResourceID'}, $kill_when_no_data);
+        $tmpdir = $my_cib_value{'tmpdir'};
+        $dbcluster_dir = $my_cib_value{'pgdata'};
+        $pgsql_data_status = $my_cib_value{'pgsql_data_status'};
+    }
+
+	# 自身のノードで他にDBクラスタにアクセスしているプロセスがないか確認
+	check_dbcluster_access($dbcluster_dir);
+
+    # コマンドを実行しているマシンのノード名ともう一台のノード名を取得
+    %node_value = get_node($ssh_info);
+
+    # corosync.confの存在有無確認
+    if ($crm_path eq "" && ! -e $hacf_path){
+        printlog("ERROR", PRIMARYSTART_MS0036, $hacf_path);
+    }
+
+    ### Pacemaker 起動の為の準備 ###
+    # 自身のノードの Pacemaker 及び corosync の稼働確認
+    printlog("LOG", PRIMARYSTART_MS0007, $operation_num++);
+    if (pacemaker_running()){
+        printlog("LOG", PRIMARYSTART_MS0008);
+        printlog("ERROR", PRIMARYSTART_MS0009);
+    }
+    printlog("LOG", PRIMARYSTART_MS0010);
+
+    ### 稼働中の Primary の存在確認 ###
+    printlog("LOG", PRIMARYSTART_MS0011, $operation_num++);
+    if (primary_running($node_value{'another_node'}, $config_value{'PG_REX_Primary_ResourceID'}, $config_value{'PG_REX_Primitive_ResourceID'}, $ssh_info)){
+        printlog("LOG", PRIMARYSTART_MS0008);
+        printlog("ERROR", PRIMARYSTART_MS0013);
+    }
+    printlog("LOG", PRIMARYSTART_MS0010);
+
+    ### 初回起動以外の場合、Primary として稼働することが可能かの確認 ###
+    if ($crm_path eq ""){
+        printlog("LOG", PRIMARYSTART_MS0027, $operation_num++);
+        if($pgsql_data_status && $pgsql_data_status ne "LATEST" && $pgsql_data_status ne "STREAMING|SYNC"){
+            printlog("LOG", PRIMARYSTART_MS0008);
+            printlog("ERROR", PRIMARYSTART_MS0028, $config_value{'PG_REX_Primitive_ResourceID'}, $pgsql_data_status);
+        }
+        printlog("LOG", PRIMARYSTART_MS0010);
+    }
+
+    ### 起動禁止フラグの存在確認 ###
+    printlog("LOG", PRIMARYSTART_MS0014, $operation_num++);
+    $lock_file = $tmpdir."/".LOCK_FILENAME;
+    if (-e $lock_file){
+        printlog("LOG", PRIMARYSTART_MS0008);
+        printlog("ERROR", PRIMARYSTART_MS0015, $lock_file);
+    }
+    printlog("LOG", PRIMARYSTART_MS0010);
+
+    if ($crm_path ne ""){
+        my $command;
+
+        ### HAクラスタの削除 ###
+        if (-e $hacf_path){
+            my $cib_dir = CIB_PATH;
+            my $command;
+
+            $cib_dir =~ s/\/$//g;
+            printlog("LOG", PRIMARYSTART_MS0016);
+            my $input = <STDIN>;
+            chomp $input;
+            if ($input !~ m/^y$/i) {
+                printlog("LOG", PRIMARYSTART_MS0017);
+                exit(0);
+            }
+            printlog("LOG", PRIMARYSTART_MS0018, $operation_num++);
+            $cib_dir = CIB_PATH;
+            exec_command("$PCS cluster destroy --all");
+            printlog("LOG", PRIMARYSTART_MS0010);
+        }
+
+        ### HAクラスタの作成 ###
+        printlog("LOG", PRIMARYSTART_MS0035, $operation_num++);
+        if(defined($config_value{'Another_IC_LAN_IPAddress2'})){
+            $command = "$PCS cluster setup $config_value{'HACLUSTER_NAME'} $node_value{'my_node'} addr=$config_value{'My_IC_LAN_IPAddress1'} addr=$config_value{'My_IC_LAN_IPAddress2'} $node_value{'another_node'} addr=$config_value{'Another_IC_LAN_IPAddress1'} addr=$config_value{'Another_IC_LAN_IPAddress2'}";
+        } else {
+            $command = "$PCS cluster setup $config_value{'HACLUSTER_NAME'} $node_value{'my_node'} addr=$config_value{'My_IC_LAN_IPAddress1'} $node_value{'another_node'} addr=$config_value{'Another_IC_LAN_IPAddress1'}";
+        }
+        exec_command("$command");
+        printlog("LOG", PRIMARYSTART_MS0010);
+    }
+
+    ### DBクラスタより、standby.signal及びrecovery.signalを削除 ###
+    exec_command("$SU - $pg_command_user -c \"$RM -f $dbcluster_dir/\"".STANDBY_SIGNAL);
+    exec_command("$SU - $pg_command_user -c \"$RM -f $dbcluster_dir/\"".RECOVERY_SIGNAL);
+
+    ### Pacemaker 起動 ###
+    printlog("LOG", PRIMARYSTART_MS0019, $operation_num++);
+
+	# postgresql.confに"# added by pg-rex_standby_start"がないことを確認
+	$result = `$GREP "# added by pg-rex_standby_start" $dbcluster_dir/postgresql.conf`;
+	if ($result) {
+		printlog("LOG", PRIMARYSTART_MS0008);
+		printlog("ERROR", PRIMARYSTART_MS0034);
+	}
+
+    # Pacemaker 起動(pcs quorum unblock 実行可能となるまでをスクリプト処理で待つため、waitオプションを指定する)
+    exec_command("$PCS cluster start --wait=60");
+    printlog("LOG", PRIMARYSTART_MS0010);
+
+    ### xml ファイルを引数で指定した場合 ###
+    if ($crm_path ne ""){
+        printlog("LOG", PRIMARYSTART_MS0020, $operation_num++);
+        # xml ファイルを反映できる状態まで待機
+        $starting_resource = "Pacemaker(not reflected crm file)";
+        while (1){
+            if (pacemaker_online($node_value{'my_node'})){
+                last;
+            }
+
+            sleep $monitor_interval;
+            $wait_time += $monitor_interval;
+            if ($wait_time >= $timeout){
+                printlog("LOG", PRIMARYSTART_MS0008);
+                printlog("ERROR", PRIMARYSTART_MS0021, $timeout, $starting_resource);
+            }
+        }
+        sleep 5;
+        
+        # xml ファイルを反映
+        $result = `$PCS cluster cib-push $crm_path`;
+        if ($? >> 8 != 0){
+            printlog("LOG", PRIMARYSTART_MS0008);
+            printlog("ERROR", PRIMARYSTART_MS0032, $crm_path);
+        }
+        printlog("LOG", PRIMARYSTART_MS0010);
+    }
+    exec_command("$PCS quorum unblock --force");
+
+    ### Primary の起動確認 ###
+    printlog("LOG", PRIMARYSTART_MS0022, $operation_num++);
+
+    # pcs status --full の結果を確認
+    # 前回起動中に自ノードで PostgreSQL の制御エラーが発生していた場合、Pacemaker 起動から暫くの間は
+    # pcs status --fullの結果に PostgreSQL の制御エラー情報(Failed Resource Actions)が残っている可能性がある。そのため、
+    # 起動確認の前に RA(pgsql) のモニタ間隔以上のディレイをおき、誤検知しないようにする。
+    sleep $monitor_delay;
+    while (1){
+        if ($wait_time >= $timeout){
+            printlog("LOG", PRIMARYSTART_MS0008);
+            printlog("ERROR", PRIMARYSTART_MS0021, $timeout, $starting_resource);
+        }
+        sleep $monitor_interval;
+        $wait_time += $monitor_interval;
+
+        if (!pacemaker_online($node_value{'my_node'})){
+            $starting_resource = "Pacemaker";
+            next;
+        }
+
+        if (pgrex_failed_action($node_value{'my_node'}, $config_value{'PG_REX_Primitive_ResourceID'})){
+            printlog("LOG", PRIMARYSTART_MS0008);
+            printlog("ERROR", PRIMARYSTART_MS0023);
+        }
+
+        # PING のリソース ID 指定有りの場合、起動確認を行なう
+        if ($config_value{'PING_ResourceID'} && !ping_running($node_value{'my_node'}, $config_value{'PING_ResourceID'})){
+            $starting_resource = "PING";
+            next;
+        }
+
+        # STORAGE-MON のリソース ID 指定有りの場合、起動確認を行なう
+        # 起動確認の処理内容が同じため、ping_runningを呼び出して確認を行なう
+        if ($config_value{'STORAGE_MON_ResourceID'} && !ping_running($node_value{'my_node'}, $config_value{'STORAGE_MON_ResourceID'})){
+            $starting_resource = "STORAGE_MON";
+            next;
+        }
+
+        # STONITH 環境有りかつリソース ID 指定有りの場合、起動確認を行なう
+        if ($config_value{'STONITH_ResourceID'} && !stonith_running($node_value{'my_node'}, $config_value{'STONITH_ResourceID'})){
+            $starting_resource = "STONITH";
+            next;
+        }
+
+        if (!primary_running($node_value{'my_node'}, $config_value{'PG_REX_Primary_ResourceID'}, $config_value{'PG_REX_Primitive_ResourceID'})){
+            $starting_resource = "PostgreSQL";
+            next;
+        }
+
+        # IPADDR_PRIMARY のリソース ID 指定有りの場合、起動確認を行なう
+        if ($config_value{'IPADDR_PRIMARY_ResourceID'} && !vip_running($node_value{'my_node'}, $config_value{'IPADDR_PRIMARY_ResourceID'})){
+            $starting_resource = "IPADDR_PRIMARY";
+            next;
+        }
+
+        # IPADDR_REPLICATION のリソース ID 指定有りの場合、起動確認を行なう
+        if ($config_value{'IPADDR_REPLICATION_ResourceID'} && !vip_running($node_value{'my_node'}, $config_value{'IPADDR_REPLICATION_ResourceID'})){
+            $starting_resource = "IPADDR_REPLICATION";
+            next;
+        }
+
+        # IPADDR_STANDBY 環境有りかつリソース ID 指定有りの場合、起動確認を行なう
+        if ($config_value{'IPADDR_STANDBY_ResourceID'} && !vip_running($node_value{'my_node'}, $config_value{'IPADDR_STANDBY_ResourceID'})){
+            $starting_resource = "IPADDR_STANDBY";
+            next;
+        }
+
+        # pcs status --full の結果が全て揃ったら無限ループを抜ける
+        last;
+    }
+
+    printlog("LOG", PRIMARYSTART_MS0010);
+    printlog("LOG", PRIMARYSTART_MS0026, $node_value{'my_node'});
+    exit(0);
+}
+

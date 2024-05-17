@@ -1,0 +1,1654 @@
+#!/usr/bin/perl
+#####################################################################
+# Function: pg-rex_standby_start
+#
+#
+# 概要:
+# PG-REX での Standby 起動実行ツール。
+# 手順の簡易化を目的として作成している。
+# 
+# 特記事項:
+# なし
+#
+# Copyright (c) 2012-2023, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+#
+#####################################################################
+package PGRex;
+
+use warnings;
+use strict;
+use sigtrap qw(die normal-signals error-signals);
+use File::Compare;
+use File::Spec;
+use File::Basename;
+use Getopt::Long;
+use Class::Struct;
+use IO::Socket::INET;
+use PGRex::command;
+use PGRex::common qw(pacemaker_online pgrex_failed_action primary_running
+                     standby_running vip_running stonith_running ping_running
+                     read_config read_cib get_ssh_passwd exec_command 
+                     ssh_exec_command scp_exec_command get_pg_command_path check_user
+                     printlog get_node
+                     check_support_version
+                     get_pg_version_num get_controldata_value get_xlog_filename compare_lsn
+                     get_pg_dir_state get_restore_archivewal_num get_start_wal_filename
+                     check_dbcluster_access create_pid_file unlink_pid_file
+                     get_sync_files receive_archive);
+
+BEGIN {
+    if ($ENV{'LANG'} =~ m/ja/i){
+        eval qq{
+            use PGRex::Po::ja;
+        };
+    }
+    else{
+        eval qq{
+            use PGRex::Po::en;
+        }
+    }
+
+	create_pid_file();
+};
+
+END {
+	unlink_pid_file();
+};
+
+$SIG{INT} = sub {
+    printlog("LOG", STANDBYSTART_MS0001);
+};
+
+struct Check_result => {
+	version_is_match => '$', # B)
+	my_xlog_is_over => '$', # D)
+	full_page_writes => '$', # F)
+	same_branch_point => '$', # H)
+	pass_my_tli => '$', # I)
+	promote_before_my_current_lsn => '$', # J)
+	match_database_id => '$', # K)
+	gt_another_tli => '$', # L)
+	wal_log_hints => '$', # M)
+	status_is_shutdown => '$', # N)
+	checkpoint_before_branch => '$', # O) 'none' or 'latest'
+	is_conf_add_comment => '$',
+	my_archive_is_over => '$',
+	exists_future_archive => '$'
+};
+
+struct My_data => {
+	pg_version => '$',
+	cluster_version => '$',
+	pg_xlog_is_empty => '$',
+	current_xlog_location => '$',
+	controldata => '%',
+	latest_branch_tli => '$',
+	latest_branch_lsn => '$',
+	copy_base_lsn => '$'
+};
+
+struct Another_data => {
+	pg_xlog_is_empty => '$',
+	current_xlog_location => '$',
+	controldata => '%',
+	new_tli => '$', # P) 'same' or 'history' or 'pg_control'
+	history_file => '$',
+  	history_tli => '$',
+	history_value => '%',
+	branch_lsn => '$',
+	pgport => '$'
+};
+
+use constant {
+	NONE                      => 0,
+	NORMAL                    => 1,
+	PG_REWIND                 => 2,
+	PG_BASEBACKUP             => 4,
+	DB_SHUTDOWNED             => "shut down",
+	DB_SHUTDOWNED_IN_RECOVERY => "shut down in recovery",
+	ADD_COMMENT               => "# added by pg-rex_standby_start"
+};
+
+main();
+
+1;
+
+sub main{
+    my $config_path = CONFIG_PATH.CONFIG_FILENAME;
+    my %config_value;
+    my $myself;
+
+    my $operation_num = 1;
+    my $operation_sub_num = 1;
+    my $exit_code;
+    my $result;
+    my @results;
+    my $command;
+	my $line;
+
+    my $help_mode = 0;
+    my $check_only_mode = 0;
+	my $interactive_mode = 0;
+	my $dry_run_mode = 0;
+    my $shared_archive_directory_mode = 0;
+    my $version_mode = 0;
+	my $is_ready;
+    my $specified_mode = NONE;
+    my $available_mode = NONE;
+    my $startup_mode = NONE;
+    my $ssh_pass;
+    my %node_value;
+    my $copy_dir = "/tmp/";
+    my $hacf_path = HACF_PATH.HACF_FILENAME;
+    my @another_iclan_ipaddr = ();
+    my $cib_path = CIB_PATH.CIB_FILENAME;
+    my $copy_cib_path = $copy_dir."cib.xml";
+    my %primary_cib_value;
+    my $kill_when_no_data = 1;
+    my $lock_file = "";
+
+    my %command_path;
+    my $pg_command_user = "postgres";
+    my $pg_xlog_dir;
+
+    my $timeout = 300;
+    my $monitor_delay = 10;
+    my $monitor_interval = 2;
+    my $wait_time = 0;
+    my $starting_resource = "";
+
+	my $historyfile_path;
+	my @history_files;
+	my $tli;
+	my @controldata_strings;
+
+	my $check_result = new Check_result();
+	my $pg_dir_state = new Pg_dir_state();
+	my $my_data = new My_data();
+	my $another_data = new Another_data();
+
+    # 標準出力が途中で停止するのを防ぐ為に
+    # 標準出力のオートフラッシュを有効化
+    $| = 1;
+
+    # オプション解析
+    foreach ( @ARGV ){
+        if ( "$_" eq "-" || "$_" eq "--" ){
+            $help_mode = 1;
+        }
+    }
+    {
+        no warnings 'once';
+
+        my $normal_mode = 0;
+        my $rewind_mode = 0;
+        my $basebackup_mode = 0;
+        $exit_code = GetOptions('help'                  => \$help_mode,
+                             'normal'                   => \$normal_mode,
+                             'rewind'                   => \$rewind_mode,
+                             'basebackup'               => \$basebackup_mode,
+                             'check-only'               => \$check_only_mode,
+                             'dry-run'                  => \$dry_run_mode,
+                             'shared-archive-directory' => \$shared_archive_directory_mode,
+                             'additional_information'   => \$PGRex::common::additional_information_mode,
+                             'version'                  => \$version_mode);
+
+        # ユーザが指定した起動モードのビット化
+        if ($normal_mode) {
+            $specified_mode |= NORMAL;
+        }
+        if ($rewind_mode) {
+            $specified_mode |= PG_REWIND;
+        }
+        if ($basebackup_mode) {
+            $specified_mode |= PG_BASEBACKUP;
+        }
+
+        # 下記の両方の条件を満たす場合に、NORMALモードで起動するようにするため、
+        # $specified_modeにNORMALのビットを立てる。
+        #  - 非対話形式で-rを指定
+        #  - DBクラスタが通常起動が可能な状態
+        # 非対話モードでREWINDが指定された場合、通常起動が可能な状態であれば、
+        # 通常起動に切り替えるという例外があるが、対話モードの場合でREWINDが
+        # 指定される場合は事前のチェックで通常起動ができないことを確認済みで
+        # あるため、この場合に$available_modeにNORMALのビットが立つことはない。
+        # よって、対話／非対話に関わらずREWINDモードが指定された場合に、
+        # $specified_modeにNORMALのビットを立てても問題がない。
+        if ($specified_mode & PG_REWIND) {
+            $specified_mode |= NORMAL;
+        }
+    }
+
+    $myself = $0;
+    $myself =~ s/.*\///g;
+    if ($help_mode || !$exit_code){
+        printlog("VERSION", VERSIONINFO, $myself, VERSIONNUM);
+        print "\n";
+        printlog("USAGE", STANDBYSTART_USAGE);
+        exit(0);
+    }
+    if ($version_mode){
+        printlog("VERSION", VERSIONINFO, $myself, VERSIONNUM);
+        exit(0);
+    }
+
+    # 実行ユーザの確認
+    check_user();
+
+    # 環境設定ファイルの読み込み
+    %config_value = read_config($config_path);
+
+    # PostgreSQL のコマンドパスを取得
+    %command_path = get_pg_command_path($config_value{'PGPATH'});
+
+    # Pacemaker と PostgreSQL がサポート対象バージョンであるかを確認
+    check_support_version($command_path{'postgres'});
+
+    ### スクリプト実行準備 ###
+
+    # 対話形式かどうかの確認
+    if ($specified_mode == NONE) {
+        $interactive_mode = 1;
+    } elsif ($check_only_mode) {
+        # 非対話モードでかつ、チェックモードの場合、非対話オプションを無視する旨の警告を表示する
+        printlog("LOG", STANDBYSTART_MS0084);
+    } 
+
+    # ssh 接続の為の情報の取得
+    $ssh_pass = get_ssh_passwd($config_value{'Another_D_LAN_IPAddress'}, $config_value{'PEER_NODE_SSH_PASS_MODE'}, $config_value{'PEER_NODE_SSH_PASS_FILE'});
+    my $ssh_info = new Ssh_info();
+    $ssh_info->address("$config_value{'Another_D_LAN_IPAddress'}");
+    $ssh_info->user("root");
+    $ssh_info->pass("$ssh_pass");
+
+    # コマンドを実行しているマシンのノード名ともう一台のノード名を取得
+    %node_value = get_node($ssh_info);
+
+    # corosync.confの存在有無確認
+    if ( ! -e $hacf_path){
+        printlog("ERROR", STANDBYSTART_MS0089, $hacf_path);
+    }
+
+    # 相手先のノードの IC-LAN のIPアドレスを配列に格納
+    push(@another_iclan_ipaddr, $config_value{'Another_IC_LAN_IPAddress1'});
+    if (defined($config_value{'Another_IC_LAN_IPAddress2'})){
+        push(@another_iclan_ipaddr, $config_value{'Another_IC_LAN_IPAddress2'});
+    }
+
+    ### Pacemaker 起動の為の準備 ###
+    # 自身のノードの Pacemaker 及び corosync の稼働確認
+    printlog("LOG", STANDBYSTART_MS0004, $operation_num++);
+    if (pacemaker_running()){
+        printlog("LOG", STANDBYSTART_MS0005);
+        printlog("ERROR", STANDBYSTART_MS0006);
+    }
+    printlog("LOG", STANDBYSTART_MS0007);
+
+    ### 稼働中の Primary の存在確認 ###
+    printlog("LOG", STANDBYSTART_MS0008, $operation_num++);
+    if (!primary_running($node_value{'another_node'}, $config_value{'PG_REX_Primary_ResourceID'}, $config_value{'PG_REX_Primitive_ResourceID'}, $ssh_info)){
+        printlog("LOG", STANDBYSTART_MS0005);
+        printlog("ERROR", STANDBYSTART_MS0010);
+    }
+    printlog("LOG", STANDBYSTART_MS0007);
+
+    # Primary マシンにある cib.xml をコピーし読み込む
+    scp_exec_command($ssh_info, $cib_path, $copy_dir);
+    %primary_cib_value = read_cib($copy_cib_path, $config_value{'PG_REX_Primitive_ResourceID'}, $kill_when_no_data);
+    exec_command("$RM -f $copy_cib_path");
+
+	# 自身のノードで他にDBクラスタにアクセスしているプロセスがないか確認
+	check_dbcluster_access($primary_cib_value{'pgdata'});
+
+    ### 起動禁止フラグの存在確認 ###
+    printlog("LOG", STANDBYSTART_MS0013, $operation_num++);
+
+    # 起動禁止フラグが存在しないことを確認
+    $lock_file = $primary_cib_value{'tmpdir'}."/".LOCK_FILENAME;
+    if (-e $lock_file){
+        printlog("LOG", STANDBYSTART_MS0005);
+        printlog("ERROR", STANDBYSTART_MS0014, $lock_file);
+    }
+
+    printlog("LOG", STANDBYSTART_MS0007);
+
+
+	### DBクラスタの状態確認 ###
+
+	printlog("LOG", STANDBYSTART_MS0034, $operation_num);
+
+    ## DB クラスタの状態を収集する
+    # DB クラスタの及びアーカイブディレクトリの状態を収集する A)、E)
+    $pg_dir_state = get_pg_dir_state($primary_cib_value{'pgdata'}, $config_value{'Archive_dir'});
+
+	# 相手ノードのfull_page_writesを取得 F)
+	$command = "$SU - $pg_command_user -c \"$command_path{'psql'} -tAc \\\"SHOW full_page_writes\\\" 2> /dev/null \"";
+	@results = ssh_exec_command($ssh_info, $command);
+	if ($results[0] eq "on") {
+		$check_result->full_page_writes(1);
+	} else {
+		$check_result->full_page_writes(0);
+	}
+	$command = "$SU - $pg_command_user -c \"$command_path{'psql'} -tAc \\\"SHOW port\\\" 2> /dev/null \"";
+	@results = ssh_exec_command($ssh_info, $command);
+	$another_data->pgport($results[0]);
+
+	# 相手のノードの pg_control と TLI hisotry ファイルの情報を収集する
+	# TLI hisotry ファイルの情報を収集
+	$historyfile_path = $config_value{'Archive_dir'}."/*.history";
+	@results = ssh_exec_command($ssh_info, "$LS -1r $historyfile_path* 2> /dev/null");
+	if ($results[0] eq "") {
+		printlog("ERROR", STANDBYSTART_MS0042);
+	}
+	@history_files = split(/\n/, $results[0]);
+	$another_data->history_file($history_files[0]);
+	($tli=$history_files[0]) =~ s/^.*\/([0-9A-F]+)\..*$/$1/;
+	$another_data->history_tli(hex($tli));
+	@results = get_history_value($history_files[0], $ssh_info);
+	my %val_list ;
+	foreach $line (@results) {
+		if( $line =~ /^(\d+)\s+([0-9A-F\/]+)/ ) {
+			$val_list{$1} = $2;
+		}
+	}
+	$another_data->history_value(\%val_list);
+
+	# pg_controlの情報を収集
+	@results = ssh_exec_command($ssh_info, "$SU - $pg_command_user -c \"export LANG=C; $command_path{'pg_controldata'} $primary_cib_value{'pgdata'}\"");
+	@controldata_strings = split(/\n/, $results[0]);
+	$another_data->controldata(get_controldata_value(@controldata_strings));
+
+	# 相手ノードのhistoryファイルが最新であることを確認 G)
+	# -> historyのTLIが、pg_controlのTLIより小さい場合NG
+	# 処理を継続する意味がないため、ここで異常終了する
+	if ($another_data->history_tli < $another_data->controldata("Latest checkpoint's TimeLineID")) {
+		my $tli_string = sprintf("%08X", $another_data->controldata("Latest checkpoint's TimeLineID"));
+		printlog("LOG", STANDBYSTART_MS0087,
+				 $another_data->controldata("Latest checkpoint's TimeLineID"),
+				 File::Spec->catfile($config_value{'Archive_dir'}, $tli_string.".history"));
+		printlog("ERROR", STANDBYSTART_MS0065);
+	}
+
+	# 相手のノードのアーカイブディレクトリに相手ノードの現在の WAL より
+	# 未来の WAL がアーカイブされていないことを確認
+	# 相手のノードの現在の WAL のファイル名を取得
+	# pg_current_wal_lsn() がセグメント境界上(xx000000)となった場合 pg_walfile_nameがすでにアーカイブされているファイルを返す
+	# pg_walfile_name が 000000 を前のセグメントだと判断することを逆補正するため 末尾を1に置換する
+	@results = ssh_exec_command($ssh_info, "$SU - $pg_command_user -c \"$command_path{'psql'} -tAc \\\"SELECT pg_walfile_name((left(pg_current_wal_lsn()::text, -1)|| '1')::pg_lsn)\\\" 2> /dev/null \"");
+	my $m_curr_wal = $results[0];
+	# 相手のノードの最新のアーカイブ WAL のファイル名を取得
+	@results = ssh_exec_command($ssh_info, "$LS -1H $config_value{'Archive_dir'} | $GREP -P \"^[0-9A-F]{24}(?!\.partial\$)(?:\.[^\.]+)?\$\" | $TAIL -1");
+	my $m_last_archive = $results[0];
+	if (($m_curr_wal cmp $m_last_archive) <= 0) {
+		$check_result->exists_future_archive(1);
+	}
+	else {
+		$check_result->exists_future_archive(0);
+	}
+
+	# wal_log_hints settingがonまたは、Data page checksum versionが0以外を確認 M)
+	if ($another_data->controldata("wal_log_hints setting") eq "on"
+		|| $another_data->controldata("Data page checksum version") > 0) {
+		$check_result->wal_log_hints(1);
+	} else {
+		$check_result->wal_log_hints(0);
+	}
+
+	# 相手のノードのTLIを比較 P)
+	# -> pg_rewind実行前にチェックポイントが必要かの判定および
+	#    TLIが同じで、自身のノードのDatabase cluster stateが、
+	#    shut down以外の場合は、pg_rewind実行NGとする判定に必要なため
+	if ($another_data->history_tli == $another_data->controldata("Latest checkpoint's TimeLineID")) {
+		$another_data->new_tli('same');
+	} elsif($another_data->history_tli > $another_data->controldata("Latest checkpoint's TimeLineID")) {
+		$another_data->new_tli('history');
+	} else {
+		$another_data->new_tli('pg_control');
+	}
+
+	# 自身のノードのアーカイブにファイルがある場合、相手のノードより後の
+	# WALを含むセグメントファイルがないか確認
+	$check_result->my_archive_is_over(0);
+	if (!$pg_dir_state->pgarch_empty) {
+		# 相手のノードの最新のTLIを設定
+		my $s_tli = $another_data->history_tli;
+		# 相手のノードの最新のLSNを取得
+		$command = "$SU - $pg_command_user -c \"$command_path{'psql'} -tAc \\\"SELECT pg_current_wal_lsn()\\\" 2> /dev/null \"";
+		@results = ssh_exec_command($ssh_info, $command);
+		$results[0] =~ /^([0-9A-F]+)\/([0-9A-F]+)$/;
+		my ($s_logid, $s_segno) = (hex($1), hex($2));
+		my $s_lsn = ($s_logid << 32) + ($s_segno << 24);
+
+		# 相手のノードより後のセグメントファイル名を確認
+		opendir(my $dir, $config_value{'Archive_dir'}) || die "Failed to open archive directory: $config_value{'Archive_dir'}";
+		foreach my $file (sort readdir($dir)) {
+			next if ($file !~ /^(([0-9A-F]{8})([0-9A-F]{8})([0-9A-F]{8}))(\.partial)?(?:\.(.+))?$/);
+			my ($f_basename, $f_tli, $f_logid, $f_segno, $f_partial, $f_suffix) =
+				($1, hex($2), hex($3), hex($4), defined $5, $6);
+			my $f_lsn = ($f_logid << 32) + ($f_segno << 24);
+			if ($f_tli > $s_tli || $f_lsn >= $s_lsn) {
+				$check_result->my_archive_is_over(1);
+				last;
+			}
+		}
+		closedir($dir);
+	}
+
+	$check_result->is_conf_add_comment(0);
+	# 以降は自身のノードが存在する場合のみチェック
+	if ($pg_dir_state->pgdata_exist) {
+		# pg-rex_standby_startが追記した内容がpostgresql.confに存在するかチェック
+		$command = "$GREP \"".ADD_COMMENT."\" $primary_cib_value{'pgdata'}/postgresql.conf";
+		$result = `$command`;
+		if ($result) {
+			$check_result->is_conf_add_comment(1);
+		}
+
+		# 自身のノードの pg_control と TLI hisotry ファイルの情報を収集する
+		# TLI hisotry ファイルの情報を収集
+		$historyfile_path = $config_value{"Archive_dir"}."/*.history";
+		$result = `$LS -1r $historyfile_path* 2> /dev/null`;
+		my $exit_code = $? >> 8;
+		if ($exit_code != 0) {
+			# ダミーデータを設定
+			$my_data->latest_branch_tli(1);
+			$my_data->latest_branch_lsn("0/00000000");
+		} else {
+			@results = split(/\n/, $result);
+			my @history_files = split(/\n/, $results[0]);
+			@results = get_history_value($history_files[0]);
+			foreach $line (@results) {
+				# 最後のTLIの情報のみ収集
+				if( $line =~ /^(\d+)\s+([0-9A-F\/]+)/) {
+					$my_data->latest_branch_tli($1);
+					$my_data->latest_branch_lsn($2);
+				}
+			}
+		}
+
+		# pg_controlの情報を収集
+        $result = exec_command("$SU - $pg_command_user -c \"export LANG=C; $command_path{'pg_controldata'} $primary_cib_value{'pgdata'}\"");
+        @controldata_strings = split(/\n/, $result);
+        $my_data->controldata(get_controldata_value(@controldata_strings));
+
+		## 自身のノード単独の確認
+		# クラスタのバージョンチェック B)
+		if (check_dbcluster_version($my_data, $primary_cib_value{'pgdata'}, $command_path{'postgres'}, $pg_command_user)) {
+			$check_result->version_is_match(0);
+		} else {
+			$check_result->version_is_match(1);
+		}
+
+		# 自身のノードのDatabase cluster stateが、shut downまたは、
+		# shut down in recoveryのいずれかであることを確認 N)
+		if ($my_data->controldata("Database cluster state") eq "shut down"
+			|| $my_data->controldata("Database cluster state") eq "shut down in recovery") {
+			$check_result->status_is_shutdown(1);
+		} else {
+			$check_result->status_is_shutdown(0);
+		}
+
+		# (STEP7)自身ノードの TLI が過去に通っていることを確認 I)
+		# 自身のノードのLatest checkpoint locationが分岐点前であることの確認 O)
+		my $target_tli;
+		if ($another_data->history_tli == $my_data->controldata("Latest checkpoint's TimeLineID")) {
+			$target_tli = $my_data->controldata("Latest checkpoint's TimeLineID") -1;
+		} elsif ($another_data->history_tli < $my_data->controldata("Latest checkpoint's TimeLineID")) {
+			$target_tli = $another_data->history_tli -1 ;
+		}else {
+			$target_tli = $my_data->controldata("Latest checkpoint's TimeLineID");
+		}
+
+		$another_data->branch_lsn($another_data->history_value($target_tli));
+		if ($another_data->branch_lsn) {
+			$check_result->pass_my_tli(1);
+
+			if (compare_lsn($another_data->branch_lsn, $my_data->controldata("Latest checkpoint location")) >= 0) {
+				$check_result->checkpoint_before_branch("latest");
+				$my_data->copy_base_lsn($my_data->controldata("Latest checkpoint location"));
+			} else {
+				$check_result->checkpoint_before_branch("none");
+			}
+		} else {
+			$check_result->pass_my_tli(0);
+			$check_result->checkpoint_before_branch("none");
+		}
+
+		## 自身のノードと相手のノードの比較
+		# (STEP 3)自身のノードと相手のノードのデータベース識別子が一致していることを確認 K)
+		if ($my_data->controldata("Database system identifier")
+			eq $another_data->controldata("Database system identifier")) {
+			$check_result->match_database_id(1);
+		} else {
+			$check_result->match_database_id(0);
+		}
+
+		# (STEP 4)自身のノードの TLI が相手のノードを超過していないことを確認 L)
+		if ($my_data->controldata("Latest checkpoint's TimeLineID")
+			> $another_data->history_tli) {
+			$check_result->gt_another_tli(1);
+		} else {
+			$check_result->gt_another_tli(0);
+		}
+
+		# 両ノードのpg_waldumpに指定する読取り終了セグメントファイル名を特定する
+		my $my_latest_wal_filename;
+		my $another_latest_walfile_name;
+		my $another_latest_checkpoint_walfile_path;
+		my $another_latest_checkpoint_walfile_name;
+		$command = "$LS -l $primary_cib_value{'pgdata'}/pg_wal/ | $GREP -P \"[0-9A-F]{24}\$\" | $TAIL -1";
+		$result = exec_command($command);
+		if ($result =~ /.*([0-9A-F]{24})$/){
+			$my_latest_wal_filename = $1;
+			$my_data->pg_xlog_is_empty(0);
+		} else {
+			$my_data->pg_xlog_is_empty(1);
+		}
+
+		$command = "$LS -l $primary_cib_value{'pgdata'}/pg_wal/ | $GREP -P \"[0-9A-F]{24}\$\" | $TAIL -1";
+		@results = ssh_exec_command($ssh_info, $command);
+		if ($results[0] =~ /.*([0-9A-F]{24})$/){
+			$another_latest_walfile_name = $1;
+			$another_data->pg_xlog_is_empty(0);
+
+			# 読取り開始セグメントファイル名を特定する
+			my $filename = $another_data->controldata("Latest checkpoint's REDO WAL file");
+			$filename =~ s/^[0-9A-F]{8}([0-9A-F]{16})$/$1/;
+			$command = "$LS -1 $primary_cib_value{'pgdata'}/pg_wal/*$filename* | $GREP -P '[0-9A-F]{24}(\.partial)?'";
+			@results = ssh_exec_command($ssh_info, $command);
+			my @filenames = split(/\n/, $results[0]);
+			# 最大2件しか返ってこない
+			if (($filename = $filenames[0]) =~ /.*\.partial/) {
+				$another_latest_checkpoint_walfile_path = $filenames[1];
+			} else {
+				$another_latest_checkpoint_walfile_path = $filenames[0];
+			}
+		} else {
+			$another_data->pg_xlog_is_empty(1);
+		}
+
+		# 自身のノードのTLIが相手のノードを超過している場合、
+		# 以降のLSN関連のチェックは行わない
+		if ($check_result->gt_another_tli) {
+			# 省略したチェック項目のエラーが出ないように値を設定
+			$check_result->my_xlog_is_over(0);
+			$check_result->same_branch_point(1);
+			$check_result->promote_before_my_current_lsn(0);
+			$check_result->pass_my_tli(1);
+
+		} else {
+			# (STEP 5)自身のノードの XLOG 位置が相手のノードを超過していないことを確認 D)
+			if ($another_data->pg_xlog_is_empty) {
+				$check_result->my_xlog_is_over(1);
+			} elsif ($my_data->pg_xlog_is_empty) {
+				# 自身のノードの pg_wal が空の場合は超過していないと判定する
+				$check_result->my_xlog_is_over(0);
+			} else {
+				$check_result->my_xlog_is_over(0);
+				
+				# 自身のノードの最新のLSNを取得する
+				$my_data->current_xlog_location(getLatestLsn($my_data->controldata("Latest checkpoint's REDO WAL file"), 
+										$my_latest_wal_filename, 
+										$primary_cib_value{'pgdata'}."/pg_wal", 
+										$command_path{'pg_waldump'}, 
+										$pg_command_user));
+
+				# 相手のノードの最新のLSNを取得する
+				# WALファイル名からTLIを取得
+				$another_latest_checkpoint_walfile_path =~ /^.*([0-9A-F]{24}(\.partial)?)/;
+				$another_latest_checkpoint_walfile_name = $1;
+				my $another_latest_checkpoint_tli = substr($another_latest_checkpoint_walfile_name,0,8);
+				my $another_latest_tli = substr($another_latest_walfile_name,0,8);
+				
+				# pg_controlのTLIが最新のTLIより小さい場合、
+				# pg_waldumpの読み取り開始ファイルを最新のTLIのpg_walに存在する最古のWALセグメントファイルにする
+				my $waldump_walfilename_start = $another_latest_checkpoint_walfile_name;
+				if ($another_latest_checkpoint_tli lt $another_latest_tli){
+					$command = "$LS -1Hr $primary_cib_value{'pgdata'}/pg_wal/ | $GREP -P \"^${another_latest_tli}[0-9A-F]{16}\$\" | $TAIL -1";
+					@results = ssh_exec_command($ssh_info, $command);
+					chomp $results[0];
+					if ($results[0] eq ""){
+						# pg_walにWALセグメントファイルが存在しない
+						printlog("ERROR", STANDBYSTART_MS0099);
+					}
+					$waldump_walfilename_start = $results[0];
+				}
+				my $waldump_walfilepath_start = "$primary_cib_value{'pgdata'}/pg_wal/$waldump_walfilename_start";
+				my $waldump_walfilepath_end = "$primary_cib_value{'pgdata'}/pg_wal/$another_latest_walfile_name";
+				$command = "$SU - $pg_command_user -c \"$command_path{'pg_waldump'} $waldump_walfilepath_start $waldump_walfilepath_end 2> /dev/null | $TAIL -1\"";
+				@results = ssh_exec_command($ssh_info, $command);
+				if ($results[0] =~ /.*lsn:\s+([0-9A-F\/]+).*/){
+					$another_data->current_xlog_location($1);
+				}
+
+				# 取得した XLOG 位置を比較(自身のノードの XLOG 位置の方が進んでいないか確認)
+				$result = compare_lsn($my_data->current_xlog_location,
+									  $another_data->current_xlog_location);
+				if ($result > 0){
+					$check_result->my_xlog_is_over(1);
+				}
+			}
+
+			# TLIのhistoryファイルを確認し、分岐点が一致していることを確認 H)
+			if ($my_data->latest_branch_tli >= $another_data->history_tli) {
+				$check_result->same_branch_point(0);
+			} elsif ($check_result->pass_my_tli
+				&& compare_lsn($my_data->latest_branch_lsn,
+							   $another_data->history_value($my_data->latest_branch_tli))) {
+				$check_result->same_branch_point(0);
+			} else {
+				$check_result->same_branch_point(1);
+			}
+
+			# 両ノードで、TLI、分岐点が同じ場合、STEP8はチェック不要
+			if ($another_data->history_tli == $my_data->controldata("Latest checkpoint's TimeLineID")) {
+				$check_result->promote_before_my_current_lsn(0);
+			} else {
+				# (STEP8) 既存のDBクラスタでそのまま組み込めるか判断するため、
+				# 自身ノードの現在の LSN よりも先に promote されていないことを確認 J)
+				# 
+				# 相手ノードの昇格したLSN(分岐点)より、昇格前のタイムラインで自身ノードが
+				# 先行する可能性がある場合、既存クラスタを組込めないと判断
+				# 
+				# [$check_result->pass_my_tliが0の場合]
+				# 自身ノードの TLI が相手ノードの過去の TLI を通っていないと判断
+				# 
+				# [$check_result->pass_my_tliが1の場合]
+				# 自身ノードの TLI が相手ノードの過去の TLI を通っているため、
+				# 自身ノードの現在の LSN よりも先に promote されていなければ、既存クラスタ組込み可と判断
+				# ただし、昇格後の相手ノードのWALセグメントファイルが自身ノードに存在するが、
+				# 自身ノードのpg_controlが更新されておらず、昇格後の相手ノードのTLIより前の
+				# 情報だった場合でも、みかけ上自身ノードが先行しているようにみえるため組込めないと判断
+				# (将来修正が必要)
+				if (!$check_result->pass_my_tli) {
+					$check_result->promote_before_my_current_lsn(0);
+				} else {
+					$result = compare_lsn($my_data->current_xlog_location,
+										  $another_data->history_value($my_data->controldata("Latest checkpoint's TimeLineID")));
+					if ($result < 0){
+						$check_result->promote_before_my_current_lsn(0);
+					} else {
+						$check_result->promote_before_my_current_lsn(1);
+					}
+				}
+			}
+		}
+	}
+
+
+	### 既存クラスタのチェック ###
+	#
+	# ・対話またはチェックモードの場合
+	#   ->チェックを実行する
+	# ・非対話モードの場合
+	#   ->NORMALのビットが立っている場合にチェックを実行する
+	#
+	printlog("LOG", STANDBYSTART_MS0050, $operation_num, $operation_sub_num++);
+	if (($specified_mode & NORMAL) || $check_only_mode || $interactive_mode) {
+		if ($pg_dir_state->pgdata_exist) {
+			# 共通の確認項目
+			$is_ready = common_cluster_check($check_result, $pg_dir_state,
+											 $my_data, $another_data);
+
+			# (STEP 5)自身のノードの XLOG 位置が相手のノードを超過していないことを確認 D)
+			if ($check_result->my_xlog_is_over) {
+				if ($another_data->pg_xlog_is_empty) {
+					printlog("ERROR", STANDBYSTART_MS0040, $primary_cib_value{'pgdata'}."/pg_wal");
+				}
+				printlog("LOG", STANDBYSTART_MS0041, 
+						 $my_data->current_xlog_location,
+						 $another_data->current_xlog_location);
+				$is_ready = 0;
+			}
+
+			# (STEP8) 自身ノードの現在の LSN よりも先に promote されていないことを確認 J)
+			if ($check_result->promote_before_my_current_lsn) {
+				printlog("LOG", STANDBYSTART_MS0044);
+				$is_ready = 0;
+			}
+		} else {
+			# (STEP 1)DB クラスタが存在していることを確認 A)
+			printlog("LOG", STANDBYSTART_MS0033);
+			$is_ready = 0;
+		}
+
+		# 全モード共通のチェックを実施
+		if (validate_check_result_common($check_result) != 0) {
+			$is_ready = 0;
+		}
+
+		if ($is_ready) {
+			$available_mode |= NORMAL;
+			printlog("LOG", STANDBYSTART_MS0007);
+		} else {
+			printlog("LOG", STANDBYSTART_MS0005);
+		}
+	} else {
+		printlog("LOG", STANDBYSTART_MS0086);
+	}
+
+	### pg_rewind実行のためのチェック ###
+	#
+	# ・既にチェック済みのモードで起動可能なものがあれば、チェックをしない
+	#   また、非対話モードではPG_REWINDのビットが立っていない場合もチェックをしない
+	#
+	printlog("LOG", STANDBYSTART_MS0051, $operation_num, $operation_sub_num++);
+	if (!($available_mode & NORMAL) &&
+	     (($specified_mode & PG_REWIND) || $check_only_mode || $interactive_mode)) {
+		if ($pg_dir_state->pgdata_exist) {
+			# 共通の確認項目
+			$is_ready = common_cluster_check($check_result, $pg_dir_state,
+											 $my_data, $another_data);
+
+			# 相手ノード側のfull_page_writesがonであることを確認 F)
+			if (!$check_result->full_page_writes) {
+				printlog("LOG", STANDBYSTART_MS0055);
+				$is_ready = 0;
+			}
+
+			# pg_controlのwal_log_hints settingがonまたは、
+			# Data page checksum versionが0以外となっていることの確認 M)
+			if (!$check_result->wal_log_hints) {
+				printlog("LOG", STANDBYSTART_MS0056);
+				$is_ready = 0;
+			}
+
+			# 自身のノードのLatest checkpoint locationが分岐点前であることの確認 O)
+			if ($another_data->branch_lsn) {
+				# デバッグ情報は、branch LSNがある場合のみ表示
+				printlog("DEBUG", "branch LSN                 : [0]\n",
+						 $another_data->branch_lsn);
+				printlog("DEBUG", "Latest checkpoint location : [0]\n",
+						 $my_data->controldata("Latest checkpoint location"));
+			}
+			# チェックモードまたは対話モードの場合、分岐点とチェックポイント位置の確認をする。
+			# 非対話モードでPG_REWINDのビットが立っている場合は、wal_keep_segmentsの設定によって
+			# 分岐点前の最終CHECKPOINT以降のWALがpg_walに存在するケースを考慮して
+			# この確認をスキップする。
+			if ($check_only_mode || $interactive_mode) {
+				if ($check_result->checkpoint_before_branch eq "none") {
+					printlog("LOG", STANDBYSTART_MS0072);
+					$is_ready = 0;
+				}
+			}
+
+			# 自身のノードと相手のノードのTLIが同じで、かつ自身のノードの
+			# Database cluster stateが"shut down","shut down in recovery"
+			# 以外となっていないか確認
+			if ($another_data->new_tli eq "same" 
+				&& $my_data->controldata("Latest checkpoint's TimeLineID") == $another_data->history_tli
+				&& $my_data->controldata("Database cluster state") ne DB_SHUTDOWNED
+				&& $my_data->controldata("Database cluster state") ne DB_SHUTDOWNED_IN_RECOVERY) {
+				printlog("LOG", STANDBYSTART_MS0057);
+				$is_ready = 0;
+			}
+
+		} else {
+			printlog("LOG", STANDBYSTART_MS0033);
+			$is_ready = 0;
+		}
+
+		# 全モード共通のチェックを実施
+		if (validate_check_result_common($check_result) != 0) {
+			$is_ready = 0;
+		}
+
+		if ($is_ready) {
+			$available_mode |= PG_REWIND;
+			printlog("LOG", STANDBYSTART_MS0007);
+		} else {
+			printlog("LOG", STANDBYSTART_MS0005);
+		}
+	} else {
+		printlog("LOG", STANDBYSTART_MS0086);
+	}
+
+	### pg_basebackup実行のためのチェック ###
+	#
+	# ・対話またはチェックモードの場合
+	#   ->DBクラスタチェックを実行する
+	# ・非対話モードの場合
+	#   ->既にチェック済みのモードで起動可能なものがあれば、チェックをしない
+	#     また、PG_BASEBACKUPのビットが立っていない場合もチェックをしない
+	#
+	printlog("LOG", STANDBYSTART_MS0052, $operation_num, $operation_sub_num++);
+	if ((($specified_mode & PG_BASEBACKUP) && $available_mode == NONE) || 
+	    $check_only_mode || $interactive_mode) {
+		$is_ready = 1;
+
+        # アーカイブディレクトリ共有モードの場合はアーカイブ WAL の存在確認は行わない
+        if (!$shared_archive_directory_mode){
+            if ($pg_dir_state->pgdata_exist){
+                # Primary 側と DB 識別子が一致していない、かつアーカイブ
+				# WAL が存在する場合は異常終了する
+                # NOTE: 適用不可のアーカイブ WAL が残存している可能性があるため
+                if ($my_data->controldata("Database system identifier")
+					ne $another_data->controldata("Database system identifier")
+					&& !$pg_dir_state->pgarch_empty){
+                    printlog("LOG", STANDBYSTART_MS0032,
+							 $config_value{'Archive_dir'});
+					$is_ready = 0;
+                }
+            }
+            else {
+                # DB クラスタが存在せず、かつアーカイブ WAL が存在する場合は
+				# 異常終了する
+                # NOTE: Standby初回起動時に不要のアーカイブWALが残存しているため
+                if (!$pg_dir_state->pgarch_empty){
+                    printlog("LOG", STANDBYSTART_MS0032,
+							 $config_value{'Archive_dir'});
+					$is_ready = 0;
+                }
+            }
+        }
+
+		# 相手のノードより後のセグメントファイルがアーカイブに存在する場合は
+		# 異常終了する
+		if (!$pg_dir_state->pgarch_empty && $is_ready 
+			&& $check_result->my_archive_is_over) {
+			printlog("LOG", STANDBYSTART_MS0076);
+			$is_ready = 0;
+		}
+
+		# 全モード共通のチェックを実施
+		if (validate_check_result_common($check_result) != 0) {
+			$is_ready = 0;
+		}
+
+		if ($is_ready) {
+			$available_mode |= PG_BASEBACKUP;
+			printlog("LOG", STANDBYSTART_MS0007);
+		} else {
+			printlog("LOG", STANDBYSTART_MS0005);
+		}
+	} else {
+		printlog("LOG", STANDBYSTART_MS0086);
+	}
+	$operation_num++;
+
+	printlog("DEBUG", "specified_mode : $specified_mode\n");
+	printlog("DEBUG", "available_mode : $available_mode\n");
+
+	## 起動可能なモードが存在しない場合は選択肢が存在しない旨のメッセージを表示して終了する
+	if (!$available_mode) {
+		printlog("LOG", STANDBYSTART_MS0058);
+		exit(0);
+	}
+
+	if ($check_only_mode || $interactive_mode) {
+		my $select_items = "";
+
+		## 起動可能なモードの表示
+		printlog("LOG", STANDBYSTART_MS0059);
+
+		if ($available_mode & NORMAL) {
+			printlog("LOG", STANDBYSTART_MS0060);
+			$select_items .= "n/";
+		} elsif ($available_mode & PG_REWIND) {
+			printlog("LOG", STANDBYSTART_MS0061);
+			$select_items .= "r/";
+		}
+		if ($available_mode & PG_BASEBACKUP) {
+			printlog("LOG", STANDBYSTART_MS0062);
+			$select_items .= "b/";
+		}
+
+		# チェックモードの場合は終了する
+		if ($check_only_mode) {
+			exit(0);
+		}
+
+		printlog("LOG", STANDBYSTART_MS0063);
+		$select_items .= "q";
+
+		while(1) {
+			printlog("LOG", STANDBYSTART_MS0064, $select_items);
+
+			# 入力処理
+			my $input = <STDIN>;
+			chomp $input;
+			if ($input =~ m/^n$/i && $available_mode & NORMAL){
+				$specified_mode = NORMAL;
+				last;
+			} elsif ($input =~ m/^r$/i && $available_mode & PG_REWIND){
+				$specified_mode = PG_REWIND;
+				last;
+			} elsif ($input =~ m/^b$/i && $available_mode & PG_BASEBACKUP){
+				$specified_mode = PG_BASEBACKUP;
+				last;
+			} elsif ($input =~ m/^q$/i){
+				printlog("LOG", STANDBYSTART_MS0065);
+				exit(0);
+			} else {
+				printlog("LOG", STANDBYSTART_MS0066);
+			}
+		}
+	}
+
+    ### IC-LAN が接続されていることを確認 ###
+    # 自身のノードと相手先のノードの IC-LAN IP アドレスを取得して接続確認を行う
+	# dry runの時は実際に確認を行わない
+    printlog("LOG", STANDBYSTART_MS0011, $operation_num++);
+
+	if (!$dry_run_mode) {
+		foreach my $ipaddr (@another_iclan_ipaddr){
+			`$PING -c 5 $ipaddr`;
+			$exit_code = $? >> 8;
+			if ($exit_code){
+				printlog("LOG", STANDBYSTART_MS0005);
+				printlog("ERROR", STANDBYSTART_MS0012);
+			}
+		}
+	}
+    printlog("LOG", STANDBYSTART_MS0007);
+
+	# 起動モード毎の処理
+	# 
+	# ・各種変数の説明
+	#    - $specified_mode : ユーザが指定した起動モード
+	#    - $available_mode : 起動可能な起動モード
+	#    - $startup_mode   : 実際に起動する起動モード (必ず1ビット)
+	#
+	# ・startup_mode_mapの説明
+	#    - 配列番号 : ユーザが指定した起動モードの中で選択可能なモード
+	#                 ($specified_modeと$available_modeの論理積)
+	#    - 配列要素 : $startup_modeの候補
+	# 
+	#   +------------+---------------------+
+	#   |  要素番号  |      配列要素       |
+	#   +------------+---------------------+
+	#   | 000 (なし) | 000 (NONE)          |
+	#   | 001 ( n )  | 001 (NORMAL)        |
+	#   | 010 ( r )  | 010 (PG_REWIND)     |
+	#   | 011 ( nr ) | 001 (NORMAL)        |
+	#   | 100 ( b )  | 100 (PG_BASEBACKUP) |
+	#   | 101 ( nb ) | 001 (NORMAL)        |
+	#   | 110 ( rb ) | 010 (PG_REWIND)     |
+	#   | 111 ( nrb) | 001 (NORMAL)        |
+	#   +------------+---------------------+
+	my @startup_mode_map = (NONE,NORMAL,PG_REWIND,NORMAL,PG_BASEBACKUP,NORMAL,PG_REWIND,NORMAL);
+
+	# ユーザ指定したモードで、起動可能なものを選択する
+	$startup_mode = $startup_mode_map[$specified_mode & $available_mode];
+
+	if ($startup_mode == NORMAL) {
+		## 既存のDBクラスタを用いたStandbyの起動の場合の処理 ###
+		if (!$interactive_mode) {
+			printlog("LOG", STANDBYSTART_MS0067);
+		}
+
+	} elsif ($startup_mode == PG_REWIND) {
+		## pg_rewind実行後Standby起動の場合の処理 ###
+		if (!$interactive_mode) {
+			printlog("LOG", STANDBYSTART_MS0068);
+		}
+
+		### 巻き戻し ###
+		printlog("LOG", STANDBYSTART_MS0070, $operation_num++);
+		printlog("LOG", STANDBYSTART_MS0085, $my_data->current_xlog_location,
+				 $another_data->branch_lsn);
+		printlog("LOG", STANDBYSTART_MS0071);
+
+		### 相手のノードにcheckpointを実行 ###
+		if ($another_data->history_tli != $another_data->controldata("Latest checkpoint's TimeLineID")
+			&& !$dry_run_mode) {
+			printlog("DEBUG", "execute \"checkpoint\" to peer node\n");
+			$command = "$SU - $pg_command_user -c \"$command_path{'psql'} -tAc \\\"CHECKPOINT\\\" 2> /dev/null \"";
+			@results = ssh_exec_command($ssh_info, $command);
+		}
+
+		### pg_rewindが相手のノードに接続するための設定 ###
+		if (!$dry_run_mode) {
+			# 使用するポートの検索
+			my $port;
+			foreach ($another_data->pgport .. 60000) {
+				if ( my $socket = IO::Socket::INET->new(
+						 Proto => 'tcp',
+						 LocalHost => '127.0.0.1',
+						 LocalPort => $_,
+						 Timeout => '1')) {
+					$port = $_;
+					close($socket);
+					last;
+				}
+			}
+
+			# ポートフォワードの準備
+			my $ssh;
+			if ($ssh_info->pass eq "") {
+				$ssh = Net::OpenSSH->new(
+					$config_value{'Another_D_LAN_IPAddress'},
+					user => $ssh_info->user,
+					master_stderr_discard => 1);
+			} else {
+				$ssh = Net::OpenSSH->new(
+					$config_value{'Another_D_LAN_IPAddress'},
+					user => $ssh_info->user, password => $ssh_info->pass,
+					master_stderr_discard => 1);
+			}
+			$ssh->error and printlog("ERROR", STANDBYSTART_MS0073, $ssh->error);
+			my $peer_port = $another_data->pgport;
+			my @out = $ssh->open_ex({stdin_pipe => 1, stdout_pipe => 1, stderr_pipe => 1, ssh_opts => "-L127.0.0.1:$port:127.0.0.1:$peer_port"});
+			$ssh->error and printlog("ERROR", STANDBYSTART_MS0073, $ssh->error);
+
+			### pg_rewind実行 ###
+			$command = "$SU - $pg_command_user -c \"export LANG=C;$command_path{'pg_rewind'} -c -D $primary_cib_value{'pgdata'} --source-server='host=127.0.0.1 port=$port user=$pg_command_user' -P 2>&1\"";
+			# pg_rewindはエラーも標準出力に表示するため、エラー時の情報を
+			# 取得するため、exec_commandは使用しない
+			$result = `$command`;
+			$exit_code = $? >> 8;
+			if ($exit_code != 0) {
+				if ($result =~ /server closed the connection unexpectedly/){
+					printlog("DEBUG", $result);
+					printlog("LOG", STANDBYSTART_MS0074);
+				} else {
+					printlog("LOG", $result);
+				}
+				printlog("ERROR", STANDBYSTART_MS0005);
+			}
+			printlog("LOG", $result);
+
+			### pg_rewindが相手のノードに接続するための設定の削除 ###
+			undef $ssh;
+
+			### 空のWALファイルと archive_status の .ready ファイルの削除 ###
+			# pg_rewind実行中に相手ノードから削除されたファイルは自身のノードに
+			# 空ファイルとして作成されることがある。これがWALファイルと
+			# それに対応するarchive_status の .ready ファイルの両方に該当した場合、
+			# そのままStandbyを起動すると空のアーカイブWALが作成されてしまうため、
+			# 当該ファイルを削除することで回避する
+			my $archive_status_dir =
+				File::Spec->catdir(($primary_cib_value{'pgdata'}, "pg_wal", "archive_status"));
+			# 自身のノードの archive_status から .ready ファイルを抽出し、
+			# 対応するWALファイルが存在し、かつ不正なサイズである場合はこれらを削除する
+			opendir(my $dir, $archive_status_dir) || die "Failed to open archive_status directory: $archive_status_dir";
+			foreach my $ready_file (grep { $_ =~ /^[0-9A-F]{24}\.ready$/ } readdir($dir)) {
+				my ($xlog_file) = $ready_file =~ /([0-9A-F]{24})/;
+				my $xlog_file_path =
+					File::Spec->catfile(($primary_cib_value{'pgdata'}, "pg_wal"), $xlog_file);
+
+				if (-f $xlog_file_path && -s $xlog_file_path != $another_data->controldata("Bytes per WAL segment")) {
+					my $ready_file_path = File::Spec->catfile($archive_status_dir, $ready_file);
+					unlink($ready_file_path);
+					unlink($xlog_file_path);
+				}
+			}
+			closedir($dir);
+		}
+
+		printlog("LOG", STANDBYSTART_MS0007);
+
+	} elsif ($startup_mode == PG_BASEBACKUP) {
+		## pg_basebackup実行後Standby起動の場合の処理 ###
+		if (!$interactive_mode) {
+			printlog("LOG", STANDBYSTART_MS0069);
+		}
+
+		printlog("LOG", STANDBYSTART_MS0015, $operation_num++);
+
+        # Standby 側の DB クラスタを削除
+		if (!$dry_run_mode) {
+			exec_command("$SU - $pg_command_user -c \"$RM -rf $primary_cib_value{'pgdata'} \"");
+
+			# Primary の pg_wal の場所を取得し、Standby の pg_wal を削除
+			# ※readlink コマンドは、引数に指定されたファイルにシンボリックリンクが存在する場合、コマンドの戻り値に"0"を返す
+			# ※戻り値が"0"の場合のみ、pg_wal を削除する
+			@results = ssh_exec_command($ssh_info, "$READLINK $primary_cib_value{'pgdata'}/pg_wal ");
+			$exit_code = $results[1];
+			if ($exit_code != 0 && $exit_code != 1){
+				printlog("LOG", STANDBYSTART_MS0005);
+				printlog("ERROR", STANDBYSTART_MS0018);
+			}
+			elsif (!$exit_code){
+				chomp $results[0];
+				$pg_xlog_dir = $results[0];
+				exec_command("$SU - $pg_command_user -c \"$RM -rf $pg_xlog_dir/*\"");
+				exec_command("$SU - $pg_command_user -c \" $command_path{'pg_basebackup'} --no-manifest -h $config_value{'Another_D_LAN_IPAddress'} -U $primary_cib_value{'repuser'} -D $primary_cib_value{'pgdata'} --waldir=$pg_xlog_dir -X none -P \"");
+			}
+			else {
+				$pg_xlog_dir =
+					File::Spec->catdir(($primary_cib_value{'pgdata'}, "pg_wal"));
+				exec_command("$SU - $pg_command_user -c \" $command_path{'pg_basebackup'} --no-manifest -h $config_value{'Another_D_LAN_IPAddress'} -U $primary_cib_value{'repuser'} -D $primary_cib_value{'pgdata'} -X none -P \"");
+			}
+
+			# pg_wal が空であることを確認
+			opendir(my $dir, $pg_xlog_dir) || die "Failed to open WAL directory: $pg_xlog_dir";
+			if (grep { $_ ne '.' && $_ ne '..' && $_ ne 'archive_status' } readdir $dir) {
+				printlog("ERROR", STANDBYSTART_MS0080);
+			}
+			closedir($dir);
+		}
+        printlog("LOG", STANDBYSTART_MS0007);
+
+	} elsif ($startup_mode == NONE) {
+		printlog("ERROR", STANDBYSTART_MS0058);
+	} else {
+		## BUG ##
+		# 起動できる選択肢がないとして処理が終わっているはずなので、
+		# ここに来るのはバグ以外ない
+		printlog("ERROR", STANDBYSTART_MS0099);
+	}
+
+
+	### Primary のアーカイブディレクトリと同期 ###
+	# shared-archive-directory オプションが指定されている場合は実行しない
+	if (!$shared_archive_directory_mode) {
+		printlog("LOG", STANDBYSTART_MS0019, $operation_num++);
+		if (!$dry_run_mode) {
+
+			if (archive_sync($ssh_info, $config_value{'Archive_dir'}, $another_data->controldata("Bytes per WAL segment")) != 0) {
+				printlog("ERROR", STANDBYSTART_MS0005);
+			}
+
+			# normalモードの場合はアーカイブ欠損の発生をチェック
+			if ($startup_mode == NORMAL) {
+				if (check_archive_lost($primary_cib_value{'pgdata'},
+									   $config_value{'Archive_dir'},
+									   $my_data->controldata("Latest checkpoint's REDO WAL file"),
+									   $pg_command_user,
+									   $command_path{'pg_waldump'})) {
+					printlog("ERROR", STANDBYSTART_MS0083);
+				}
+			}
+		}
+		printlog("LOG", STANDBYSTART_MS0007);
+	}
+
+	### DBクラスタより、standby.signal及びrecovery.signalを削除 ###
+	if (!$dry_run_mode) {
+		exec_command("$SU - $pg_command_user -c \"$RM -f $primary_cib_value{'pgdata'}/\"".STANDBY_SIGNAL);
+		exec_command("$SU - $pg_command_user -c \"$RM -f $primary_cib_value{'pgdata'}/\"".RECOVERY_SIGNAL);
+	}
+
+	### DBクラスタより、standby.signal及びrecovery.signalを削除 ###
+	if (!$dry_run_mode) {
+		exec_command("$SU - $pg_command_user -c \"$RM -f $primary_cib_value{'pgdata'}/\"".STANDBY_SIGNAL);
+		exec_command("$SU - $pg_command_user -c \"$RM -f $primary_cib_value{'pgdata'}/\"".RECOVERY_SIGNAL);
+	}
+
+    ### アーカイブリカバリ対象の WAL セグメント数を算出
+    # backup_label が存在する場合は backup_label からリカバリが開始される WAL ファイル名を取得する
+    my $start_wal_filename;
+    my $backup_label_path = $primary_cib_value{'pgdata'}."/backup_label";
+    if (-f $backup_label_path){
+        $result = `$CAT $backup_label_path`;
+        my @backup_label_string = split(/\n/, $result);
+        $start_wal_filename = get_start_wal_filename($backup_label_path, @backup_label_string);
+    }
+    # backup_label が存在しない場合は pg_control から取得する
+    else {
+        $start_wal_filename = $my_data->controldata("Latest checkpoint's REDO WAL file");
+    }
+
+    my $wal_segment_num = get_restore_archivewal_num($primary_cib_value{'pgdata'}, $config_value{'Archive_dir'}, $start_wal_filename);
+
+    ### Pacemaker 起動 ###
+    printlog("LOG", STANDBYSTART_MS0021, $operation_num++, $wal_segment_num);
+	if (!$dry_run_mode) {
+		exec_command("$PCS cluster start");
+	}
+    printlog("LOG", STANDBYSTART_MS0007);
+
+    ### Standby の起動確認 ###
+    printlog("LOG", STANDBYSTART_MS0022, $operation_num++);
+
+    # Pacemaker 及び リソースの起動確認
+    # 前回起動中に自ノードで PostgreSQL の制御エラーが発生していた場合、Pacemaker 起動から暫くの間は
+    # pcs status --fullの結果に PostgreSQL の制御エラー情報(Failed actions)が残っている可能性がある。そのため、
+    # 起動確認の前にRA(pgsql) のモニタ間隔以上のディレイをおき、誤検知しないようにする。
+    my $error_code = 0;
+	if (!$dry_run_mode) {
+		sleep $monitor_delay;
+		while (1){
+			if ($wait_time >= $timeout){
+				printlog("LOG", STANDBYSTART_MS0005);
+				printlog("LOG", STANDBYSTART_MS0046, $timeout);
+				if ($starting_resource eq "PostgreSQL" && $error_code == 2){
+					printlog("ERROR", STANDBYSTART_MS0047, $starting_resource);
+				}
+				else {
+					printlog("ERROR", STANDBYSTART_MS0048, $starting_resource);
+				}
+			}
+			sleep $monitor_interval;
+			$wait_time += $monitor_interval;
+
+			if (!pacemaker_online($node_value{'my_node'})){
+				$starting_resource = "Pacemaker";
+				next;
+			}
+
+			if (pgrex_failed_action($node_value{'my_node'}, $config_value{'PG_REX_Primitive_ResourceID'})){
+				printlog("LOG", STANDBYSTART_MS0005);
+				printlog("ERROR", STANDBYSTART_MS0024);
+			}
+			
+			# PING のリソース ID 指定有りの場合、起動確認を行なう
+			if ($config_value{'PING_ResourceID'} && !ping_running($node_value{'my_node'}, $config_value{'PING_ResourceID'})){
+				$starting_resource = "PING";
+				next;
+			}
+
+			# STORAGE-MON のリソース ID 指定有りの場合、起動確認を行なう
+			# 起動確認の処理内容が同じため、ping_runningを呼び出して確認を行なう
+			if ($config_value{'STORAGE_MON_ResourceID'} && !ping_running($node_value{'my_node'}, $config_value{'STORAGE_MON_ResourceID'})){
+				$starting_resource = "STORAGE_MON";
+				next;
+			}
+
+			# STONITH 環境有りかつリソース ID 指定有りの場合、起動確認を行なう
+			if ($config_value{'STONITH_ResourceID'} && !stonith_running($node_value{'my_node'}, $config_value{'STONITH_ResourceID'})){
+				$starting_resource = "STONITH";
+				next;
+			}
+
+			if (!standby_running($node_value{'my_node'}, $config_value{'PG_REX_Primary_ResourceID'}, $config_value{'PG_REX_Primitive_ResourceID'}, \$error_code)){
+				$starting_resource = "PostgreSQL";
+				next;
+			}
+
+			# printlog("LOG", "IPADDR_STANDBY");
+			# IPADDR_STANDBY 環境有りかつリソース ID 指定有りの場合、起動確認を行なう
+			if ($config_value{'IPADDR_STANDBY_ResourceID'} && !vip_running($node_value{'my_node'}, $config_value{'IPADDR_STANDBY_ResourceID'})){
+				$starting_resource = "IPADDR_STANDBY";
+				next;
+			}
+
+			# pcs status --full の結果が全て揃ったら無限ループを抜ける
+			last;
+		}
+	}
+
+    printlog("LOG", STANDBYSTART_MS0007);
+    printlog("LOG", STANDBYSTART_MS0029, $node_value{'my_node'});
+    exit(0);
+}
+
+sub get_history_value {
+	my ($history_file, $ssh_info) = @_;
+	my $ext;
+	my @results;
+	my $result;
+	my @ret;
+
+	($ext=$history_file) =~ s/^.*\.(.*)$/$1/;
+	if ($ext eq "history"){ # 圧縮なし
+		if ($ssh_info) {
+			@results = ssh_exec_command($ssh_info, "$CAT $history_file");
+			@ret = split(/\n/, $results[0]);
+		} else {
+			$result = exec_command("$CAT $history_file");
+			@ret = split(/\n/, $result);
+		}
+	}
+	elsif ($ext eq "gz"){ # GZIP圧縮
+		if ($ssh_info) {
+			@results = ssh_exec_command($ssh_info, "$GZIP -dc $history_file");
+			@ret = split(/\n/, $results[0]);
+		} else {
+			$result = exec_command("$GZIP -dc $history_file");
+			@ret = split(/\n/, $result);
+		}
+	}
+	elsif ($ext eq "bz2"){ # BZIP2圧縮
+		if ($ssh_info) {
+			@results = ssh_exec_command($ssh_info, "$BZIP2 -dc $history_file");
+			@ret = split(/\n/, $results[0]);
+		} else {
+			$result = exec_command("$BZIP2 -dc $history_file");
+			@ret = split(/\n/, $result);
+		}
+	}
+	else{  # 未サポートの拡張子
+		printlog("ERROR", STANDBYSTART_MS0049, $ext);
+	}
+
+	return @ret;
+}
+
+sub common_cluster_check {
+	my ($check_result, $pg_dir_state, $my_data, $another_data) = @_;
+	my $is_ready = 1;
+
+	# (STEP 2)DB クラスタのバージョンと PostgreSQL サーバのバージョンが一致していることを確認 B)
+	if (!$check_result->version_is_match) {
+		if (!$my_data->cluster_version) {
+			printlog("LOG", STANDBYSTART_MS0035);
+		} else {
+			printlog("LOG", STANDBYSTART_MS0036, $my_data->cluster_version,
+					 $my_data->pg_version);
+		}
+		$is_ready = 0;
+	}
+
+	# (STEP 3)自身のノードと相手のノードのデータベース識別子が一致していることを確認 K)
+	if (!$check_result->match_database_id) {
+		printlog("LOG", STANDBYSTART_MS0037,
+				 $my_data->controldata("Database system identifier"),
+				 $another_data->controldata("Database system identifier"));
+		$is_ready = 0;
+	}
+
+	# (STEP 4)自身のノードの TLI が相手のノードを超過していないことを確認 L)
+	if ($check_result->gt_another_tli) {
+		printlog("LOG", STANDBYSTART_MS0038,
+				 $my_data->controldata("Latest checkpoint's TimeLineID"),
+				 $another_data->controldata("Latest checkpoint's TimeLineID"));
+		$is_ready = 0;
+	}
+
+	# (STEP7)自身ノードの TLI が過去に通っていることを確認 I)
+	if (!$check_result->pass_my_tli) {
+		printlog("LOG", STANDBYSTART_MS0043, $another_data->history_file);
+		$is_ready = 0;
+	}
+
+	# TLIのhistoryファイルを確認し、分岐点が一致していることを確認 H)
+	if (!$check_result->same_branch_point && !$pg_dir_state->pgarch_empty) {
+		printlog("LOG", STANDBYSTART_MS0053, $my_data->latest_branch_tli);
+		$is_ready = 0;
+	}
+
+	# postgresql.confに"# added by pg-rex_standby_start"がないことを確認
+	if ($check_result->is_conf_add_comment) {
+		printlog("LOG", STANDBYSTART_MS0075);
+		$is_ready = 0;
+	}
+
+	# 相手のノードより後のセグメントファイルがアーカイブに存在するか確認
+	if ($check_result->my_archive_is_over) {
+		printlog("LOG", STANDBYSTART_MS0076);
+		$is_ready = 0;
+	}
+
+	return $is_ready;
+}
+
+sub archive_sync {
+	my ($ssh_info, $archive_dir, $bytes_per_wal_segment) = @_;
+	my $last_archivelog_name;
+	my $last_archivelog_path;
+
+	if ($archive_dir !~ /\/$/) {
+		$archive_dir = $archive_dir."/";
+	}
+
+	# Primaryのアーカイブディレクトリ内のファイル全て
+	# (*.history, *.partial, *.backup, アーカイブWAL)を
+	# Standbyのアーカイブディレクトリに同期する
+	#
+	# アーカイブディレクトリの同期は以下の順序で行う
+	# アーカイブWALの同期は、Primaryのアーカイブ中に同期した場合、不完全な
+	# アーカイブWALが同期される可能性あるため、アーカイブWALの同期は Primary の
+	# アーカイブWALの方が先行している場合にのみ行う。また、アーカイブWALの
+	# 同期後は最終アーカイブWALの完全性を確認し、最終アーカイブWALが不完全で
+	# あった場合は、当該ファイルの同期をリトライする
+	#  1. アーカイブWAL以外のファイル(*.history, *.partial, *.backup)を同期する
+	#  2. アーカイブWALを同期する
+
+	my %sync_files = get_sync_files($ssh_info, $archive_dir, $archive_dir, 0);
+	my %maintenance_files = ();
+	my %archivewal_files = ();
+
+	# アーカイブWAL以外のファイルの同期
+	while (my ($name, $size) = each(%sync_files)){
+		if ($name =~ /^(.*)(\.history|\.partial|\.backup)(\.gz|\.bz2)?$/){
+			$maintenance_files{$name} = $size;
+		}
+	}
+	receive_archive($ssh_info, $archive_dir, $bytes_per_wal_segment, \%maintenance_files);
+
+	# アーカイブWALの同期
+	# アーカイブディレクトリを比較し、Standby が先行している場合は同期しない
+	if (archive_compare($ssh_info, $archive_dir) > 0) {
+		printlog("LOG", STANDBYSTART_MS0077);
+		return 0;
+	}
+	while (my ($name, $size) = each(%sync_files)){
+		if ($name =~ /^([0-9A-F]{24})(\.gz|\.bz2)?$/){
+			$archivewal_files{$name} = $size;
+		}
+	}
+	receive_archive($ssh_info, $archive_dir, $bytes_per_wal_segment, \%archivewal_files);
+
+	$last_archivelog_name = exec_command(
+		"$LS -1H $archive_dir | $GREP -P \"^[0-9A-F]{24}(?!\.partial\$)(?:\.[^\.]+)?\$\" | $TAIL -1");
+	chomp $last_archivelog_name;
+
+	if (!${last_archivelog_name}) {
+		return 0;
+	}
+
+	$last_archivelog_path =
+		File::Spec->catfile($archive_dir, $last_archivelog_name);
+
+	# 最終アーカイブWALが不完全である場合は同期をリトライ
+	if (!is_valid_xlogfile($last_archivelog_path, $bytes_per_wal_segment)) {
+		for (my $retry = 0; $retry < 5; $retry++) {
+			sleep 0.2;	# 200ms
+
+			unlink($last_archivelog_path);
+			my %last_archivelog = ();
+			$last_archivelog{$last_archivelog_name} = $bytes_per_wal_segment;
+			receive_archive($ssh_info, $archive_dir, $bytes_per_wal_segment, \%last_archivelog);
+
+			if (is_valid_xlogfile($last_archivelog_path, $bytes_per_wal_segment)) {
+				return 0;
+			}
+		}
+		unlink($last_archivelog_path);
+		printlog("LOG", STANDBYSTART_MS0078, $last_archivelog_name);
+		return 1;
+	}
+
+	return 0;
+}
+
+sub archive_compare {
+	my ($ssh_info, $archive_dir) = @_;
+	my $l_last_archivelog_name;
+	my $r_last_archivelog_name;
+	my $command = "$LS -1H $archive_dir | $GREP -P \"^[0-9A-F]{24}(?!\.partial\$)(?:\.[^\.]+)?\$\" | $TAIL -1";
+	my @results;
+
+	# ローカルとリモートのアーカイブディレクトリを比較し、
+	# 比較結果を以下の条件で返却する。
+	#  - ローカルの最終アーカイブWALの方が進んでいる場合は「1」を返却する
+	#  - リモートの最終アーカイブWALの方が進んでいる場合は「-1」を返却する
+	#  - ローカルとリモートの最終アーカイブWALが同一の場合は「0」を返却する
+	$l_last_archivelog_name = exec_command($command);
+	@results = ssh_exec_command($ssh_info, $command);
+	$r_last_archivelog_name = $results[0];
+	chomp $l_last_archivelog_name;
+	chomp $r_last_archivelog_name;
+
+	return $l_last_archivelog_name cmp $r_last_archivelog_name;
+}
+
+sub is_valid_xlogfile {
+	my ($xlogfilepath, $bytes_per_wal_segment) = @_;
+	my $xlogfilename = basename($xlogfilepath);
+
+	# 引数に指定されたパスにファイルが存在しない場合は戻り値に「0」を返却する
+	if (!-f $xlogfilepath) {
+		return 0
+	}
+
+	# 引数に指定されたWALファイルの完全性を確認する
+	# ファイル名から拡張子を抽出し、拡張子毎に以下の判定を行う
+	#  - 拡張子なしの場合、ファイルサイズが制御ファイルの「Bytes per WAL segment」であるか判定する
+	#  - 拡張子が「gz」の場合、アーカイブが完全であるかを判定する
+	#  - 拡張子が「bz2」の場合、アーカイブが完全であるかを判定する
+	# 判定結果が「正」の場合は、戻り値に「1」を返却する
+	# 判定結果が「否」の場合は、戻り値に「0」を返却する
+	my ($ext) = $xlogfilename =~ /\.([^\.]+)$/;
+	if (!defined($ext)) { # 圧縮なし
+		if (-s $xlogfilepath != $bytes_per_wal_segment) {
+			return 0;
+		}
+	}
+	elsif ($ext eq "gz") { # GZIP圧縮
+		`$GZIP -t $xlogfilepath 2> /dev/null`;
+		my $exit_code = $? >> 8;
+		if ($exit_code != 0) {
+			return 0;
+		}
+	}
+	elsif ($ext eq "bz2") { # BZIP2圧縮
+		`$BZIP2 -t $xlogfilepath 2> /dev/null`;
+		my $exit_code = $? >> 8;
+		if ($exit_code != 0) {
+			return 0;
+		}
+	}
+	else { # 未サポートの拡張子
+		printlog("LOG", STANDBYSTART_MS0079, $xlogfilename, $ext);
+	}
+
+	return 1;
+}
+
+sub validate_check_result_common {
+	my ($check_result) = @_;
+	my $ret = 0;
+
+	# Primary のアーカイブディレクトリに Primary の現在の WAL より未来の
+	# WAL がアーカイブされている
+	if ($check_result->exists_future_archive) {
+		printlog("LOG", STANDBYSTART_MS0081);
+		$ret = 1;
+	}
+
+	return $ret;
+}
+
+sub check_dbcluster_version {
+	my ($my_data, $pgdata_dir, $postgres_command_path, $pg_command_user) = @_;
+
+	my $pg_version_file = File::Spec->catfile($pgdata_dir, "PG_VERSION");
+	my $dbcluster_version = `$SU $pg_command_user -c "$CAT $pg_version_file"`;
+	chomp $dbcluster_version;
+	if ($dbcluster_version) {
+		$my_data->cluster_version($dbcluster_version);
+
+		my $version_num = get_pg_version_num($postgres_command_path);
+		$my_data->pg_version(int($version_num / 10000));
+
+		if ($my_data->cluster_version eq $my_data->pg_version) {
+			return 0;
+		}
+	}
+
+	return 1;
+}
+
+sub check_archive_lost {
+	my ($pgdata_dir, $archive_dir, $checkpoint_xlog_name, $pg_command_user, $pg_waldump_path) = @_;
+	my $xlog_dir = File::Spec->catdir(($pgdata_dir, "pg_wal"));
+	my $last_archivelog_name;
+	my $last_archivelog_segno;
+	my $last_xlog_name;
+	my $latest_xlog_segno;
+	my $segno;
+	my $command; 
+	my $result;
+	my $regex;
+	my $xlog_name;
+	my $ready_file_path;
+	my $ready_name;
+
+	# 最新アーカイブWALの次のセグメント～最新オンラインWALの1つ前の
+	# セグメントを対象範囲として、範囲内の全てのセグメントファイルが存在し、
+	# かつアーカイブステータスが「ready」であることを確認する
+
+	# 最新アーカイブWALのファイル名からセグメント番号を取得
+	$last_archivelog_name = `$LS -1H $archive_dir | $GREP -P \"[0-9A-F]{24}\$\" | $TAIL -1`;
+	chomp($last_archivelog_name);
+	if (!$last_archivelog_name) {
+		# アーカイブWALが存在しない場合は欠損が起きないのでチェック終了
+		return 0;
+	}
+	$last_archivelog_name =~ /[0-9A-F]{8}([0-9A-F]{8})([0-9A-F]{8})/;
+	$last_archivelog_segno = hex($1) * 0xFF + hex($2);
+
+	# 最新オンラインWALを特定し、当該ファイルのセグメント番号を取得
+	$last_xlog_name = `$LS -1H $xlog_dir | $GREP -P \"[0-9A-F]{24}\$\" | $TAIL -1`;
+	chomp($last_xlog_name);
+	if (!$last_archivelog_name) {
+		# オンラインWALが存在しない場合は欠損が起きないのでチェック終了
+		return 0;
+	}
+	$result = getLatestLsn($checkpoint_xlog_name, $last_xlog_name, $xlog_dir, $pg_waldump_path, $pg_command_user);
+	$result =~ /^([0-9A-F]+)\/([0-9A-F]+)$/;
+	$latest_xlog_segno = hex($1) * 0xFF + (hex($2) >> 24);
+
+	# 最新アーカイブWALの次のセグメント～最新オンラインWALの1つ前のセグメントを
+	# 対象範囲として、セグメントファイルおよびアーカイブステータスを確認
+	for ($segno = $last_archivelog_segno + 1; $segno < $latest_xlog_segno; $segno++) {
+		# セグメントファイルの存在を確認
+		# (複数のTLIが存在する場合は最新のTLIのものを抽出)
+		$regex = sprintf("[0-9A-F]{8}%08X%08X", $segno / 0xFF, $segno % 0xFF);
+		$xlog_name = `$LS -1H $xlog_dir | $GREP -P $regex | $TAIL -1`;
+		if (!$xlog_name) {
+			# セグメントファイルが存在しない
+			return 1;
+		}
+
+		# セグメントファイルのアーカイブステータスを確認
+		chomp($xlog_name);
+		$ready_name = sprintf("%s.ready", $xlog_name);
+		$ready_file_path = File::Spec->catfile(($xlog_dir, "archive_status"), $ready_name);
+		if (!-f $ready_file_path) {
+			# アーカイブステータスが「ready」ではない(.readyが存在しない)
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+# 最新のLSNを取得する
+sub getLatestLsn {
+	my ($latest_checkpoint_walfile_name, $latest_walfile_name, $pg_wal_dir, $pg_waldump_path, $pg_command_user) = @_;
+
+	# WALファイル名からTLIを取得
+	my $latest_checkpoint_tli = substr($latest_checkpoint_walfile_name,0,8);
+	my $latest_tli = substr($latest_walfile_name,0,8);
+
+	# pg_controlのTLIが最新のTLIより小さい場合、
+	# pg_waldumpの読み取り開始ファイルを最新のTLIのpg_walに存在する最古のWALセグメントファイルにする
+	if ($latest_checkpoint_tli lt $latest_tli){
+		my @walfile_list = ();
+
+		# 最新のTLIのpg_walに存在する最古のWALセグメントファイルの取得
+		opendir(my $dir, $pg_wal_dir) || die "Failed to open pg_wal directory: $pg_wal_dir";
+		foreach my $walfile (grep { $_ =~ /^$latest_tli[0-9A-F]{16}$/ } readdir($dir)) {
+			push(@walfile_list, $walfile);
+			next;
+		}
+		closedir($dir);
+
+		if(@walfile_list){
+			@walfile_list = sort @walfile_list;
+			$latest_checkpoint_walfile_name = $walfile_list[0];
+		} else {
+			# pg_walにWALセグメントファイルが存在しない
+			printlog("ERROR", STANDBYSTART_MS0099);
+		}
+	}
+
+	my $waldump_walfilepath_start = "$pg_wal_dir/$latest_checkpoint_walfile_name";
+	my $waldump_walfilepath_end   = "$pg_wal_dir/$latest_walfile_name";
+
+	my $command = "$SU - $pg_command_user -c \"$pg_waldump_path $waldump_walfilepath_start $waldump_walfilepath_end 2> /dev/null | $TAIL -1\"";
+
+	my $result = exec_command($command);
+	if ($result =~ /.*lsn:\s+([0-9A-F\/]+).*/){
+		return $1;
+	} else {
+		# pg_waldumpで最新のLSNの取得に失敗
+		printlog("ERROR", STANDBYSTART_MS0099);
+	}
+}
+
+
