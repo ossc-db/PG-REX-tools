@@ -370,7 +370,7 @@ _SWITCHOVER_USAGE_
     COMMON_MS0035       => "パスワードファイル \"[0]\" の権限が 600 ではありません\n",
     COMMON_MS0036       => "[0] に PostgreSQL コマンドが見つかりません。: [1]\n",
     COMMON_MS0037       => "PostgreSQL [0] には対応していません\n".
-                           "PostgreSQL 15 を使用してください\n",
+                           "PostgreSQL 16 を使用してください\n",
     COMMON_MS0038       => "Pacemaker [0] には対応していません\n".
                            "Pacemaker 2 を使用してください\n",
     COMMON_MS0039       => "[0] で bindnetaddr ([1]) に対応するネットワークインタフェースが見つかりませんでした\n",

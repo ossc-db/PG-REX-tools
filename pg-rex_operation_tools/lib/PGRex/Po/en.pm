@@ -364,7 +364,7 @@ _SWITCHOVER_USAGE_
     COMMON_MS0035       => "Authority of the password file \"[0]\" is not 600.\n",
     COMMON_MS0036       => "Not found PostgreSQL commands in \"[0]\". : [1]\n",
     COMMON_MS0037       => "PostgreSQL [0] is not supported.\n".
-                           "Please use version 15.\n",
+                           "Please use version 16.\n",
     COMMON_MS0038       => "Pacemaker [0] is not supported.\n".
                            "Please use version 2.\n",
     COMMON_MS0039       => "Not found network interface to correspond to bindnetaddr ([1]) on [0].\n",
