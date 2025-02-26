@@ -30,7 +30,7 @@ cp($lib_command, 'lib/PGRex/command.pm')
 
 WriteMakefile(
     NAME              => 'pg-rex_operation_tools',
-    VERSION           => '16.0',
+    VERSION           => '17.0',
     PREREQ_PM         => { 'Net::OpenSSH' => 0.62, 'IO::Tty' => 1.11 },
     PREFIX            => '/usr/local',
     INST_BIN          => 'bin',
