@@ -75,7 +75,7 @@ sub main{
     my $timeout = 300;
     my $monitor_delay = 10;
     my $monitor_interval = 2;
-    my $wait_time = 0;
+    my $start_time = 0;
     my $lock_file = "";
     my $exit_code;
     my $ssh_pass;
@@ -281,17 +281,17 @@ sub main{
         printlog("LOG", PRIMARYSTART_MS0020, $operation_num++);
         # xml ファイルを反映できる状態まで待機
         $starting_resource = "Pacemaker(not reflected crm file)";
+        $start_time = time();
         while (1){
             if (pacemaker_online($node_value{'my_node'})){
                 last;
             }
 
-            sleep $monitor_interval;
-            $wait_time += $monitor_interval;
-            if ($wait_time >= $timeout){
+            if (time() - $start_time >= $timeout){
                 printlog("LOG", PRIMARYSTART_MS0008);
                 printlog("ERROR", PRIMARYSTART_MS0021, $timeout, $starting_resource);
             }
+            sleep $monitor_interval;
         }
         sleep 5;
         
@@ -313,13 +313,13 @@ sub main{
     # pcs status --fullの結果に PostgreSQL の制御エラー情報(Failed Resource Actions)が残っている可能性がある。そのため、
     # 起動確認の前に RA(pgsql) のモニタ間隔以上のディレイをおき、誤検知しないようにする。
     sleep $monitor_delay;
+    $start_time = time();
     while (1){
-        if ($wait_time >= $timeout){
+        if (time() - $start_time >= $timeout){
             printlog("LOG", PRIMARYSTART_MS0008);
             printlog("ERROR", PRIMARYSTART_MS0021, $timeout, $starting_resource);
         }
         sleep $monitor_interval;
-        $wait_time += $monitor_interval;
 
         if (!pacemaker_online($node_value{'my_node'})){
             $starting_resource = "Pacemaker";

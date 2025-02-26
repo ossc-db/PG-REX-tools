@@ -154,7 +154,7 @@ sub main{
     my $timeout = 300;
     my $monitor_delay = 10;
     my $monitor_interval = 2;
-    my $wait_time = 0;
+    my $start_time = 0;
     my $starting_resource = "";
 
 	my $historyfile_path;
@@ -1199,8 +1199,9 @@ sub main{
     my $error_code = 0;
 	if (!$dry_run_mode) {
 		sleep $monitor_delay;
+		$start_time = time();
 		while (1){
-			if ($wait_time >= $timeout){
+			if (time() - $start_time >= $timeout){
 				printlog("LOG", STANDBYSTART_MS0005);
 				printlog("LOG", STANDBYSTART_MS0046, $timeout);
 				if ($starting_resource eq "PostgreSQL" && $error_code == 2){
@@ -1211,7 +1212,6 @@ sub main{
 				}
 			}
 			sleep $monitor_interval;
-			$wait_time += $monitor_interval;
 
 			if (!pacemaker_online($node_value{'my_node'})){
 				$starting_resource = "Pacemaker";

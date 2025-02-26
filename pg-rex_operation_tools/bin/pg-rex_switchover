@@ -65,7 +65,7 @@ sub main{
 	my $pg_command_user = "postgres";
 	my $monitor_delay = 10;
 	my $monitor_interval = 2;
-	my $wait_time = 0;
+	my $start_time = 0;
 	my $cib_path = CIB_PATH.CIB_FILENAME;
 	my $kill_when_no_data = 1;
 	my $timeout = 300;
@@ -394,13 +394,13 @@ sub main{
 
 	printlog("LOG", SWITCHOVER_MS0022, $operation_num++, $current_primary_node);
 
+	$start_time = time();
 	while (1){
-		if ($wait_time >= $timeout){
+		if (time() - $start_time >= $timeout){
 			printlog("LOG", SWITCHOVER_MS0005);
 			printlog("ERROR", SWITCHOVER_MS0023, $timeout, $starting_resource);
 		}
 		sleep $monitor_interval;
-		$wait_time += $monitor_interval;
 
 		if (!pacemaker_online($current_primary_node)){
 			$starting_resource = "Pacemaker ($current_primary_node)";
@@ -443,7 +443,7 @@ sub main{
 
     ### Pacemaker 停止確認 ###
 	# Pacemaker 、Corosync のプロセス確認ができた場合、無限ループを抜ける
-	$wait_time = 0;
+	$start_time = time();
 	while (1){
 		# 元 Primary ノードがローカルノードの場合
 		if ($primary_node){
@@ -457,12 +457,11 @@ sub main{
 				last;
 			}
 		}
-		if ($wait_time >= $timeout){
+		if (time() - $start_time >= $timeout){
 			printlog("LOG", SWITCHOVER_MS0005);
 			printlog("ERROR", SWITCHOVER_MS0027, $timeout);
 		}
 		sleep $monitor_interval;
-		$wait_time += $monitor_interval;
 	}
 
 	printlog("LOG", SWITCHOVER_MS0004);
@@ -503,14 +502,13 @@ sub main{
 	# が残っている可能性がある。そのため、起動確認の前に RA(pgsql) のモニタ間隔以上のディレイをおき、
 	# 誤検知しないようにする。
 	sleep $monitor_delay;
-	$wait_time = 0;
+	$start_time = time();
 	while (1){
-		if ($wait_time >= $timeout){
+		if (time() - $start_time >= $timeout){
 			printlog("LOG", SWITCHOVER_MS0005);
 			printlog("ERROR", SWITCHOVER_MS0023, $timeout, $starting_resource);
 		}
 		sleep $monitor_interval;
-		$wait_time += $monitor_interval;
 
 		if (!pacemaker_online($current_standby_node)){
 			$starting_resource = "Pacemaker ($current_standby_node)";

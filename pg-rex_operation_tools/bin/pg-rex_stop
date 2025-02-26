@@ -64,7 +64,7 @@ sub main{
     my $stop_target = "Stopped";
     my $timeout = 300;
     my $monitor_time = 2;
-    my $wait_time = 0;
+    my $start_time = 0;
     my $result;
     my @results;
     my $exit_code;
@@ -181,19 +181,19 @@ sub main{
     ### Pacemaker 停止確認 ###
     printlog("LOG", STOP_MS0012);
     # プロセスの確認
+    $start_time = time();
     while (1){
         # Pacemaker、Corosync のプロセス確認ができた場合、無限ループを抜ける
         if (!pacemaker_running()){
                 last;
         }
 
-        if ($wait_time >= $timeout){
+        if (time() - $start_time >= $timeout){
             printlog("LOG", STOP_MS0013);
             printlog("ERROR", STOP_MS0014, $timeout);
         }
 
         sleep $monitor_time;
-        $wait_time += $monitor_time;
     }
     printlog("LOG", STOP_MS0011);
 
