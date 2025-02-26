@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="generator" content="pandoc" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
-  <title>PG-REX運用補助ツール 16 利用マニュアル</title>
+  <title>PG-REX運用補助ツール 17 利用マニュアル</title>
   <style>
 code{white-space: pre-wrap;}
 span.smallcaps{font-variant: small-caps;}
@@ -566,7 +566,7 @@ counter-increment: item;
   <![endif]-->
 </head>
 <body>
-<h1 id="pg-rex運用補助ツール-16-利用マニュアル">PG-REX運用補助ツール 16
+<h1 id="pg-rex運用補助ツール-17-利用マニュアル">PG-REX運用補助ツール 17
 利用マニュアル</h1>
 <h2 id="目次">目次</h2>
 <ul>
@@ -576,8 +576,8 @@ counter-increment: item;
 <li><a href="#設定ファイル">設定ファイル</a></li>
 <li><a href="#使用上の注意と制約">使用上の注意と制約</a></li>
 <li><a href="#よくあるQA">よくあるQ&amp;A</a></li>
-<li><a href="#PG-REX運用補助ツール15からの変更点">PG-REX運用補助ツール
-15からの変更点</a></li>
+<li><a href="#PG-REX運用補助ツール16からの変更点">PG-REX運用補助ツール
+16からの変更点</a></li>
 </ul>
 <h2 id="運用補助ツールとは">運用補助ツールとは?</h2>
 <p>PG-REX運用補助ツールとは、PG-REXの運用手順の簡易化を目的とした以下のコマンド群です。</p>
@@ -599,22 +599,22 @@ counter-increment: item;
 <h3 id="インストール">インストール</h3>
 <h4 id="動作確認済み環境">動作確認済み環境</h4>
 <ul>
-<li>OS : Red Hat Enterprise Linux 9.2
+<li>OS : Red Hat Enterprise Linux 9.4
 <ul>
 <li>perl-IO-Tty : 1.16-4</li>
 </ul></li>
-<li>PG-REX : 16
+<li>PG-REX : 17
 <ul>
-<li>DBMS : PostgreSQL 16.0</li>
-<li>HA : Pacemaker 2.1.5-9, pcs 0.11.4-7, pm_extra_tools 1.5</li>
+<li>DBMS : PostgreSQL 17.0</li>
+<li>HA : Pacemaker 2.1.7-5.2, pcs 0.11.7-2, pm_extra_tools 1.6</li>
 </ul></li>
 </ul>
 <h4 id="パッケージのインストール">パッケージのインストール</h4>
 <p>PG-REX運用補助ツールを使用するためにインストール必須のRPMパッケージを以下に示します。<br />
 バージョンは適宜読み替えてください。</p>
 <ol type="1">
-<li>pg-rex_operation_tools_script-16.0-1.el9.noarch.rpm</li>
-<li>Net_OpenSSH-0.62-1.el8.x86_64.rpm</li>
+<li>pg-rex_operation_tools_script-17.0-1.el9.noarch.rpm</li>
+<li>Net_OpenSSH-0.62-1.el9.x86_64.rpm</li>
 <li>perl-IO-Tty-1.16-4.el9.x86_64.rpm</li>
 </ol>
 <p>Net_OpenSSHは、pg-rex_operation_tools_scriptとセットで提供されますが、perl-IO-Ttyは提供されません。<br />
@@ -625,7 +625,7 @@ for RHEL 9 x86_64」リポジトリ</li>
 <li>Rocky Linuxの場合は、「Rocky Linux 9 - CRB」リポジトリ</li>
 </ul>
 <p>PG-REX運用補助ツールのRPMをインストールします。</p>
-<pre><code># dnf install pg-rex_operation_tools_script-16.0-1.el8.noarch.rpm Net_OpenSSH-0.62-1.el8.x86_64.rpm perl-IO-Tty-1.16-4.el9.x86_64.rpm</code></pre>
+<pre><code># dnf install pg-rex_operation_tools_script-17.0-1.el9.noarch.rpm Net_OpenSSH-0.62-1.el9.x86_64.rpm perl-IO-Tty-1.16-4.el9.x86_64.rpm</code></pre>
 <p>PG-REX運用補助ツールのRPMパッケージをインストールすると、コマンドと設定ファイルは以下のように配置されます。</p>
 <pre><code>/usr
    └-local
@@ -645,7 +645,7 @@ D_LAN_IPAddress = 192.168.2.1 , 192.168.2.2
 IC_LAN_IPAddress = (192.168.1.1, 192.168.1.2) , (192.168.3.1, 192.168.3.2)
 Archive_dir = /dbfp/pgarch/arc1
 IPADDR_STANDBY = enable
-PGPATH = /usr/pgsql-15/bin
+PGPATH = /usr/pgsql-17/bin
 PEER_NODE_SSH_PASS_MODE = passfile
 PEER_NODE_SSH_PASS_FILE = /root/.pgrex/peer_passwd
 BACKUP_NODE_SSH_PASS_MODE = passfile
@@ -670,7 +670,7 @@ Warning: Permanently added &#39;192.168.2.2&#39; (ECDSA) to the list of known ho
 root@192.168.2.2&#39;s password:    ←[Ctrl]キーと[C]キーを同時に押下</code></pre>
 <h3 id="アンインストール">アンインストール</h3>
 <p>RPMパッケージのアンインストールを行います。</p>
-<pre><code># dnf remove pg-rex_operation_tools_script-16.0-1.el8.noarch.rpm Net_OpenSSH-0.62-1.el8.x86_64.rpm perl-IO-Tty-1.16-4.el9.x86_64.rpm</code></pre>
+<pre><code># dnf remove pg-rex_operation_tools_script-17.0-1.el9.noarch.rpm Net_OpenSSH-0.62-1.el9.x86_64.rpm perl-IO-Tty-1.16-4.el9.x86_64.rpm</code></pre>
 <h2 id="コマンドリファレンス">コマンドリファレンス</h2>
 <ol type="1">
 <li><a href="#pg-rex_primary_start">pg-rex_primary_start</a></li>
@@ -1135,11 +1135,11 @@ PG-REXでインストールするファイルのディレクトリ構成を2つ�
 <li>運用補助ツールではPostgreSQLのコマンドをpostgresユーザに切り替えて実行しています。そのため、PostgreSQLのコマンドが出力するメッセージはpostgresユーザの言語設定に沿って表示されます。</li>
 </ul></li>
 </ul>
-<h2 id="PG-REX運用補助ツール15からの変更点">PG-REX運用補助ツール
-15からの変更点</h2>
+<h2 id="PG-REX運用補助ツール16からの変更点">PG-REX運用補助ツール
+16からの変更点</h2>
 <ul>
-<li>対応するPG-REXのバージョンは16です。</li>
-<li>対応するOSはRed Hat Enterprise Linux 9.2です。</li>
+<li>対応するPG-REXのバージョンは17です。</li>
+<li>対応するOSはRed Hat Enterprise Linux 9.4です。</li>
 </ul>
 <hr />
 <p>Copyright (c) 2012-2024, NIPPON TELEGRAPH AND TELEPHONE
