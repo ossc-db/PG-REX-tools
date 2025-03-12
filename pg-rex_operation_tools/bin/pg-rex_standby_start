@@ -1103,12 +1103,12 @@ sub main{
 				chomp $results[0];
 				$pg_xlog_dir = $results[0];
 				exec_command("$SU - $pg_command_user -c \"$RM -rf $pg_xlog_dir/*\"");
-				exec_command("$SU - $pg_command_user -c \" $command_path{'pg_basebackup'} --no-manifest -h $config_value{'Another_D_LAN_IPAddress'} -U $primary_cib_value{'repuser'} -D $primary_cib_value{'pgdata'} --waldir=$pg_xlog_dir -X none -P \"");
+				exec_command("$SU - $pg_command_user -c \" $command_path{'pg_basebackup'} --no-manifest -d \\\"host=$config_value{'Another_D_LAN_IPAddress'} user=$primary_cib_value{'repuser'}\\\" -D $primary_cib_value{'pgdata'} --waldir=$pg_xlog_dir -X none -P \"");
 			}
 			else {
 				$pg_xlog_dir =
 					File::Spec->catdir(($primary_cib_value{'pgdata'}, "pg_wal"));
-				exec_command("$SU - $pg_command_user -c \" $command_path{'pg_basebackup'} --no-manifest -h $config_value{'Another_D_LAN_IPAddress'} -U $primary_cib_value{'repuser'} -D $primary_cib_value{'pgdata'} -X none -P \"");
+				exec_command("$SU - $pg_command_user -c \" $command_path{'pg_basebackup'} --no-manifest -d \\\"host=$config_value{'Another_D_LAN_IPAddress'} user=$primary_cib_value{'repuser'}\\\" -D $primary_cib_value{'pgdata'} -X none -P \"");
 			}
 
 			# pg_wal が空であることを確認
