@@ -1113,7 +1113,7 @@ sub main{
 
 			# pg_wal が空であることを確認
 			opendir(my $dir, $pg_xlog_dir) || die "Failed to open WAL directory: $pg_xlog_dir";
-			if (grep { $_ ne '.' && $_ ne '..' && $_ ne 'archive_status' } readdir $dir) {
+			if (grep { $_ ne '.' && $_ ne '..' && $_ ne 'archive_status' && $_ ne 'summaries' } readdir $dir) {
 				printlog("ERROR", STANDBYSTART_MS0080);
 			}
 			closedir($dir);
