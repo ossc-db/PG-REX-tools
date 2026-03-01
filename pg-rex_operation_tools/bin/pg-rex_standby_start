@@ -1574,7 +1574,7 @@ sub check_archive_lost {
 	# 最新オンラインWALを特定し、当該ファイルのセグメント番号を取得
 	$last_xlog_name = `$LS -1H $xlog_dir | $GREP -P \"[0-9A-F]{24}\$\" | $TAIL -1`;
 	chomp($last_xlog_name);
-	if (!$last_archivelog_name) {
+	if (!$last_xlog_name) {
 		# オンラインWALが存在しない場合は欠損が起きないのでチェック終了
 		return 0;
 	}
