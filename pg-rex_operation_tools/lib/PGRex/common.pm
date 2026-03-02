@@ -11,7 +11,7 @@
 # Copyright (c) 2012-2026, NTT, Inc.
 #
 #####################################################################
-package PGRex;
+package PGRex::common;
 
 use warnings;
 use strict;
@@ -22,16 +22,32 @@ use Fcntl;
 use Fcntl ':mode';
 use Errno;
 
-
+require Exporter;
+our @ISA = qw (Exporter);
+our @EXPORT_OK = qw(pacemaker_running pacemaker_online pgrex_failed_action
+                 primary_running standby_running vip_running stonith_running
+                 ping_running read_cib read_config exec_command
+                 ssh_exec_command scp_exec_command get_xlog_filename
+                 compare_lsn get_controldata_value get_start_wal_filename
+                 get_recoverywal get_restore_archivewal_num get_node
+                 get_pg_version_num check_support_version get_pg_command_path
+                 get_pg_dir_state check_user printlog get_ssh_passwd
+                 check_dbcluster_access create_pid_file unlink_pid_file
+                 get_sync_files send_archive receive_archive
+                 VERSIONNUM VERSIONINFO CONFIG_PATH CONFIG_FILENAME CIB_PATH
+                 CIB_FILENAME HACF_PATH HACF_FILENAME RA_TMPDIR LOCK_FILENAME
+                 STANDBY_SIGNAL RECOVERY_SIGNAL);
 BEGIN {
     if ($ENV{'LANG'} =~ m/ja/i){
         eval qq{
-            use PGRex::Po::ja;
+            require PGRex::Po::ja;
+            PGRex::Po::ja->import();
         };
     }
     else{
         eval qq{
-            use PGRex::Po::en;
+            require PGRex::Po::en;
+            PGRex::Po::en->import();
         };
     }
 };

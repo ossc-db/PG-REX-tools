@@ -13,10 +13,13 @@
 # Copyright (c) 2012-2026, NTT, Inc.
 #
 #####################################################################
+package PGRex::Po::en
+
 use warnings;
 use strict;
+use Exporter 'import';
 
-use constant {
+my %consts = (
 
     PRIMARYSTART_USAGE  => <<_PRIMARYSTART_USAGE_,
 PG-REX primary start tool
@@ -384,6 +387,13 @@ _SWITCHOVER_USAGE_
     COMMON_MS0056       => "Could not parse output from lsof command.[0]\n",
     COMMON_MS0057       => "The setting value of the setting parameter [0] is invalid.\n",
     COMMON_MS0058       => "File [0] has invalid permissions. Should be 600.\n",
-};
+);
+
+while( my ($name, $value) = each %consts) {
+	no strict 'refs';
+	*{$name} = sub () { $value };
+}
+
+our @EXPORT = keys %consts;
 
 1;

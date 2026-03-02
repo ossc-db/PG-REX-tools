@@ -34,17 +34,23 @@ use PGRex::common qw(pacemaker_online pgrex_failed_action primary_running
                      get_pg_version_num get_controldata_value get_xlog_filename compare_lsn
                      get_pg_dir_state get_restore_archivewal_num get_start_wal_filename
                      check_dbcluster_access create_pid_file unlink_pid_file
-                     get_sync_files receive_archive);
+                     get_sync_files receive_archive
+                     VERSIONNUM VERSIONINFO CONFIG_PATH CONFIG_FILENAME CIB_PATH
+                     CIB_FILENAME HACF_PATH HACF_FILENAME RA_TMPDIR LOCK_FILENAME
+                     STANDBY_SIGNAL RECOVERY_SIGNAL
+                     pacemaker_running);
 
 BEGIN {
     if ($ENV{'LANG'} =~ m/ja/i){
         eval qq{
-            use PGRex::Po::ja;
+            require PGRex::Po::ja;
+            PGRex::Po::ja->import();
         };
     }
     else{
         eval qq{
-            use PGRex::Po::en;
+            require PGRex::Po::en;
+            PGRex::Po::en->import();
         }
     }
 

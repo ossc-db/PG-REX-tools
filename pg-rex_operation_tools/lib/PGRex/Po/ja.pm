@@ -13,10 +13,13 @@
 # Copyright (c) 2012-2026, NTT, Inc.
 #
 #####################################################################
+package PGRex::Po::ja;
+
 use warnings;
 use strict;
+use Exporter 'import';
 
-use constant {
+my %consts = (
 
     PRIMARYSTART_USAGE  => <<_PRIMARYSTART_USAGE_,
 PG-REX を Primary として起動するツールです
@@ -390,6 +393,13 @@ _SWITCHOVER_USAGE_
     COMMON_MS0056       => "lsofコマンドの出力を読み取れません。[0]\n",
     COMMON_MS0057       => "設定パラメータ [0] の設定値が不正です。\n",
     COMMON_MS0058       => "ファイル [0] のパーミッションが不正です。600でなければなりません。\n",
-};
+);
+
+while( my ($name, $value) = each %consts) {
+	no strict 'refs';
+	*{$name} = sub () { $value };
+}
+
+our @EXPORT = keys %consts;
 
 1;

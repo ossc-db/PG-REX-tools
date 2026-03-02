@@ -20,22 +20,29 @@ use strict;
 use sigtrap qw(die normal-signals error-signals);
 use Getopt::Long;
 use PGRex::command;
+
 use PGRex::common qw(pacemaker_online pgrex_failed_action primary_running
                      vip_running stonith_running ping_running
                      read_config read_cib exec_command
                      get_pg_command_path get_ssh_passwd check_support_version
                      check_user printlog check_dbcluster_access
-                     create_pid_file unlink_pid_file);
+                     create_pid_file unlink_pid_file
+                     VERSIONNUM VERSIONINFO CONFIG_PATH CONFIG_FILENAME CIB_PATH
+                     CIB_FILENAME HACF_PATH HACF_FILENAME RA_TMPDIR LOCK_FILENAME
+                     STANDBY_SIGNAL RECOVERY_SIGNAL
+                     get_node pacemaker_running);
 
 BEGIN {
     if ($ENV{'LANG'} =~ m/ja/i){
         eval qq{
-            use PGRex::Po::ja;
+            require PGRex::Po::ja;
+            PGRex::Po::ja->import();
         };
     }
     else{
         eval qq{
-            use PGRex::Po::en;
+            require PGRex::Po::en;
+            PGRex::Po::en->import();
         }
     }
 
