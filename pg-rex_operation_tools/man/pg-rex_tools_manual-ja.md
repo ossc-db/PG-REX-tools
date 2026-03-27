@@ -690,4 +690,4 @@ PG-REX運用補助ツール利用時における、よくある質問につい�
 
 ------
 
-Copyright (c) 2012-2025, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+Copyright (c) 2012-2026, NTT, Inc.
