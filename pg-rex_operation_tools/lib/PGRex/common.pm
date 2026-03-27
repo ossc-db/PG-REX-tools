@@ -48,7 +48,7 @@ struct Pg_dir_state => {
 };
 
 use constant {
-    VERSIONNUM       => "17.0",
+    VERSIONNUM       => "18.0",
     VERSIONINFO      => "[0] (pg-rex_operation_tools) [1]\n",
     CONFIG_PATH      => "/etc/",
     CONFIG_FILENAME  => "pg-rex_tools.conf",
@@ -903,13 +903,13 @@ sub check_support_version {
 
     # Pacemaker がサポート対象バージョンであるかを確認する
     @version_factor = split(/\./, get_pm_version());
-    if (!($version_factor[0] == 2)){
+    if (!($version_factor[0] == 3)){
         printlog("ERROR", COMMON_MS0038, get_pm_version());
     }
 
     # PostgreSQL がサポート対象バージョンであるかを確認する
     $version_num = get_pg_version_num($postgres_path, $exec_user);
-    if (int($version_num / 10000) != 17){
+    if (int($version_num / 10000) != 18){
         if ($version_num >= 100000) {
             printlog("ERROR", COMMON_MS0037, int($version_num / 10000));
         } else {

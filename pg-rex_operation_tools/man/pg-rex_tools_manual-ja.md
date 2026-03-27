@@ -1,4 +1,4 @@
-# PG-REX運用補助ツール 17 利用マニュアル
+# PG-REX運用補助ツール 18 利用マニュアル
 
 ## 目次
 
@@ -8,7 +8,7 @@
 - [設定ファイル](#設定ファイル)
 - [使用上の注意と制約](#使用上の注意と制約)
 - [よくあるQ&A](#よくあるQA)
-- [PG-REX運用補助ツール 16からの変更点](#PG-REX運用補助ツール16からの変更点)
+- [PG-REX運用補助ツール 17からの変更点](#PG-REX運用補助ツール17からの変更点)
 
 ## 運用補助ツールとは? {#運用補助ツールとは}
 
@@ -46,11 +46,11 @@ PG-REX運用補助ツールとは、PG-REXの運用手順の簡易化を目的�
 
 #### 動作確認済み環境
 
-- OS : Red Hat Enterprise Linux 9.4
-  - perl-IO-Tty : 1.16-4
-- PG-REX : 17
-  - DBMS : PostgreSQL 17.0
-  - HA : Pacemaker 2.1.7-5.2, pcs 0.11.7-2, pm_extra_tools 1.6
+- OS : Red Hat Enterprise Linux 10.1
+  - perl-IO-Tty : 1.20-7
+- PG-REX : 18
+  - DBMS : PostgreSQL 18.1
+  - HA : Pacemaker 3.0.1-3, pcs 0.12.1-1, pm_extra_tools 1.8
 
 
 
@@ -59,15 +59,15 @@ PG-REX運用補助ツールとは、PG-REXの運用手順の簡易化を目的�
 PG-REX運用補助ツールを使用するためにインストール必須のRPMパッケージを以下に示します。  
 バージョンは適宜読み替えてください。
 
-1. pg-rex_operation_tools_script-17.0-1.el9.noarch.rpm
-2. Net_OpenSSH-0.62-1.el9.x86_64.rpm
-3. perl-IO-Tty-1.16-4.el9.x86_64.rpm
+1. pg-rex_operation_tools_script-18.0-1.el10.noarch.rpm
+2. Net_OpenSSH-0.62-1.el10.x86_64.rpm
+3. perl-IO-Tty-1.20-7.el10.x86_64.rpm
 
 Net_OpenSSHは、pg-rex_operation_tools_scriptとセットで提供されますが、perl-IO-Ttyは提供されません。  \
 標準リポジトリには含まれていないため、以下のリポジトリから入手する必要があります。
 
-- Red Hat Enterprise Linuxの場合は、「Red Hat CodeReady Linux Builder for RHEL 9 x86_64」リポジトリ
-- Rocky Linuxの場合は、「Rocky Linux 9 - CRB」リポジトリ
+- Red Hat Enterprise Linuxの場合は、「Red Hat CodeReady Linux Builder for RHEL 10 x86_64」リポジトリ
+- Rocky Linuxの場合は、「Rocky Linux 10 - CRB」リポジトリ
 
 
 
@@ -75,7 +75,7 @@ Net_OpenSSHは、pg-rex_operation_tools_scriptとセットで提供されます�
 PG-REX運用補助ツールのRPMをインストールします。
 
 ```
-# dnf install pg-rex_operation_tools_script-17.0-1.el9.noarch.rpm Net_OpenSSH-0.62-1.el9.x86_64.rpm perl-IO-Tty-1.16-4.el9.x86_64.rpm
+# dnf install pg-rex_operation_tools_script-18.0-1.el10.noarch.rpm Net_OpenSSH-0.62-1.el10.x86_64.rpm perl-IO-Tty-1.20-7.el10.x86_64.rpm
 ```
 
 PG-REX運用補助ツールのRPMパッケージをインストールすると、コマンドと設定ファイルは以下のように配置されます。
@@ -106,7 +106,7 @@ D_LAN_IPAddress = 192.168.2.1 , 192.168.2.2
 IC_LAN_IPAddress = (192.168.1.1, 192.168.1.2) , (192.168.3.1, 192.168.3.2)
 Archive_dir = /dbfp/pgarch/arc1
 IPADDR_STANDBY = enable
-PGPATH = /usr/pgsql-17/bin
+PGPATH = /usr/pgsql-18/bin
 PEER_NODE_SSH_PASS_MODE = passfile
 PEER_NODE_SSH_PASS_FILE = /root/.pgrex/peer_passwd
 BACKUP_NODE_SSH_PASS_MODE = passfile
@@ -145,7 +145,7 @@ root@192.168.2.2's password:	←[Ctrl]キーと[C]キーを同時に押下
 RPMパッケージのアンインストールを行います。
 
 ```
-# dnf remove pg-rex_operation_tools_script-17.0-1.el9.noarch.rpm Net_OpenSSH-0.62-1.el9.x86_64.rpm perl-IO-Tty-1.16-4.el9.x86_64.rpm
+# dnf remove pg-rex_operation_tools_script-18.0-1.el10.noarch.rpm Net_OpenSSH-0.62-1.el10.x86_64.rpm perl-IO-Tty-1.20-7.el10.x86_64.rpm
 ```
 
 
@@ -682,10 +682,10 @@ PG-REX運用補助ツール利用時における、よくある質問につい�
 
 
 
-## PG-REX運用補助ツール 16からの変更点 {#PG-REX運用補助ツール16からの変更点}
+## PG-REX運用補助ツール 17からの変更点 {#PG-REX運用補助ツール17からの変更点}
 
-- 対応するPG-REXのバージョンは17です。
-- 対応するOSはRed Hat Enterprise Linux 9.4です。
+- 対応するPG-REXのバージョンは18です。
+- 対応するOSはRed Hat Enterprise Linux 10.1です。
 
 
 ------

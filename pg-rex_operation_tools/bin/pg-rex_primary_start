@@ -243,7 +243,7 @@ sub main{
             }
             printlog("LOG", PRIMARYSTART_MS0018, $operation_num++);
             $cib_dir = CIB_PATH;
-            exec_command("$PCS cluster destroy --all --force");
+            exec_command("$PCS cluster destroy --all --yes");
             printlog("LOG", PRIMARYSTART_MS0010);
         }
 
@@ -296,14 +296,14 @@ sub main{
         sleep 5;
         
         # xml ファイルを反映
-        $result = `$PCS cluster cib-push $crm_path`;
+        $result = `$PCS cluster cib-push $crm_path --config`;
         if ($? >> 8 != 0){
             printlog("LOG", PRIMARYSTART_MS0008);
             printlog("ERROR", PRIMARYSTART_MS0032, $crm_path);
         }
         printlog("LOG", PRIMARYSTART_MS0010);
     }
-    exec_command("$PCS quorum unblock --force");
+    exec_command("$PCS quorum unblock --yes");
 
     ### Primary の起動確認 ###
     printlog("LOG", PRIMARYSTART_MS0022, $operation_num++);

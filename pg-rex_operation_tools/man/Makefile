@@ -4,7 +4,7 @@ PANDOC = pandoc
 PANDOC_OPT = --embed-resources --standalone --metadata=$(METADATA) --css=$(STYLE)
 METADATA = "pagetitle:PG-REX運用補助ツール $(VERSION) 利用マニュアル"
 
-VERSION = 17
+VERSION = 18
 STYLE = pg-rex_tools_manual.css
 SOURCE = pg-rex_tools_manual-ja.md
 MANUAL = html/pg-rex_tools_manual-ja.html

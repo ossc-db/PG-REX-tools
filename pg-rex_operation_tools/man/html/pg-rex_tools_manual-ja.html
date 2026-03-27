@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="generator" content="pandoc" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
-  <title>PG-REX運用補助ツール 17 利用マニュアル</title>
+  <title>PG-REX運用補助ツール 18 利用マニュアル</title>
   <style>
 code{white-space: pre-wrap;}
 span.smallcaps{font-variant: small-caps;}
@@ -566,7 +566,7 @@ counter-increment: item;
   <![endif]-->
 </head>
 <body>
-<h1 id="pg-rex運用補助ツール-17-利用マニュアル">PG-REX運用補助ツール 17
+<h1 id="pg-rex運用補助ツール-18-利用マニュアル">PG-REX運用補助ツール 18
 利用マニュアル</h1>
 <h2 id="目次">目次</h2>
 <ul>
@@ -576,8 +576,8 @@ counter-increment: item;
 <li><a href="#設定ファイル">設定ファイル</a></li>
 <li><a href="#使用上の注意と制約">使用上の注意と制約</a></li>
 <li><a href="#よくあるQA">よくあるQ&amp;A</a></li>
-<li><a href="#PG-REX運用補助ツール16からの変更点">PG-REX運用補助ツール
-16からの変更点</a></li>
+<li><a href="#PG-REX運用補助ツール17からの変更点">PG-REX運用補助ツール
+17からの変更点</a></li>
 </ul>
 <h2 id="運用補助ツールとは">運用補助ツールとは?</h2>
 <p>PG-REX運用補助ツールとは、PG-REXの運用手順の簡易化を目的とした以下のコマンド群です。</p>
@@ -599,33 +599,33 @@ counter-increment: item;
 <h3 id="インストール">インストール</h3>
 <h4 id="動作確認済み環境">動作確認済み環境</h4>
 <ul>
-<li>OS : Red Hat Enterprise Linux 9.4
+<li>OS : Red Hat Enterprise Linux 10.1
 <ul>
-<li>perl-IO-Tty : 1.16-4</li>
+<li>perl-IO-Tty : 1.20-7</li>
 </ul></li>
-<li>PG-REX : 17
+<li>PG-REX : 18
 <ul>
-<li>DBMS : PostgreSQL 17.0</li>
-<li>HA : Pacemaker 2.1.7-5.2, pcs 0.11.7-2, pm_extra_tools 1.6</li>
+<li>DBMS : PostgreSQL 18.1</li>
+<li>HA : Pacemaker 3.0.1-3, pcs 0.12.1-1, pm_extra_tools 1.8</li>
 </ul></li>
 </ul>
 <h4 id="パッケージのインストール">パッケージのインストール</h4>
 <p>PG-REX運用補助ツールを使用するためにインストール必須のRPMパッケージを以下に示します。<br />
 バージョンは適宜読み替えてください。</p>
 <ol type="1">
-<li>pg-rex_operation_tools_script-17.0-1.el9.noarch.rpm</li>
-<li>Net_OpenSSH-0.62-1.el9.x86_64.rpm</li>
-<li>perl-IO-Tty-1.16-4.el9.x86_64.rpm</li>
+<li>pg-rex_operation_tools_script-18.0-1.el10.noarch.rpm</li>
+<li>Net_OpenSSH-0.62-1.el10.x86_64.rpm</li>
+<li>perl-IO-Tty-1.20-7.el10.x86_64.rpm</li>
 </ol>
 <p>Net_OpenSSHは、pg-rex_operation_tools_scriptとセットで提供されますが、perl-IO-Ttyは提供されません。<br />
 標準リポジトリには含まれていないため、以下のリポジトリから入手する必要があります。</p>
 <ul>
 <li>Red Hat Enterprise Linuxの場合は、「Red Hat CodeReady Linux Builder
-for RHEL 9 x86_64」リポジトリ</li>
-<li>Rocky Linuxの場合は、「Rocky Linux 9 - CRB」リポジトリ</li>
+for RHEL 10 x86_64」リポジトリ</li>
+<li>Rocky Linuxの場合は、「Rocky Linux 10 - CRB」リポジトリ</li>
 </ul>
 <p>PG-REX運用補助ツールのRPMをインストールします。</p>
-<pre><code># dnf install pg-rex_operation_tools_script-17.0-1.el9.noarch.rpm Net_OpenSSH-0.62-1.el9.x86_64.rpm perl-IO-Tty-1.16-4.el9.x86_64.rpm</code></pre>
+<pre><code># dnf install pg-rex_operation_tools_script-18.0-1.el10.noarch.rpm Net_OpenSSH-0.62-1.el10.x86_64.rpm perl-IO-Tty-1.20-7.el10.x86_64.rpm</code></pre>
 <p>PG-REX運用補助ツールのRPMパッケージをインストールすると、コマンドと設定ファイルは以下のように配置されます。</p>
 <pre><code>/usr
    └-local
@@ -645,7 +645,7 @@ D_LAN_IPAddress = 192.168.2.1 , 192.168.2.2
 IC_LAN_IPAddress = (192.168.1.1, 192.168.1.2) , (192.168.3.1, 192.168.3.2)
 Archive_dir = /dbfp/pgarch/arc1
 IPADDR_STANDBY = enable
-PGPATH = /usr/pgsql-17/bin
+PGPATH = /usr/pgsql-18/bin
 PEER_NODE_SSH_PASS_MODE = passfile
 PEER_NODE_SSH_PASS_FILE = /root/.pgrex/peer_passwd
 BACKUP_NODE_SSH_PASS_MODE = passfile
@@ -670,7 +670,7 @@ Warning: Permanently added &#39;192.168.2.2&#39; (ECDSA) to the list of known ho
 root@192.168.2.2&#39;s password:    ←[Ctrl]キーと[C]キーを同時に押下</code></pre>
 <h3 id="アンインストール">アンインストール</h3>
 <p>RPMパッケージのアンインストールを行います。</p>
-<pre><code># dnf remove pg-rex_operation_tools_script-17.0-1.el9.noarch.rpm Net_OpenSSH-0.62-1.el9.x86_64.rpm perl-IO-Tty-1.16-4.el9.x86_64.rpm</code></pre>
+<pre><code># dnf remove pg-rex_operation_tools_script-18.0-1.el10.noarch.rpm Net_OpenSSH-0.62-1.el10.x86_64.rpm perl-IO-Tty-1.20-7.el10.x86_64.rpm</code></pre>
 <h2 id="コマンドリファレンス">コマンドリファレンス</h2>
 <ol type="1">
 <li><a href="#pg-rex_primary_start">pg-rex_primary_start</a></li>
@@ -1135,11 +1135,11 @@ PG-REXでインストールするファイルのディレクトリ構成を2つ�
 <li>運用補助ツールではPostgreSQLのコマンドをpostgresユーザに切り替えて実行しています。そのため、PostgreSQLのコマンドが出力するメッセージはpostgresユーザの言語設定に沿って表示されます。</li>
 </ul></li>
 </ul>
-<h2 id="PG-REX運用補助ツール16からの変更点">PG-REX運用補助ツール
-16からの変更点</h2>
+<h2 id="PG-REX運用補助ツール17からの変更点">PG-REX運用補助ツール
+17からの変更点</h2>
 <ul>
-<li>対応するPG-REXのバージョンは17です。</li>
-<li>対応するOSはRed Hat Enterprise Linux 9.4です。</li>
+<li>対応するPG-REXのバージョンは18です。</li>
+<li>対応するOSはRed Hat Enterprise Linux 10.1です。</li>
 </ul>
 <hr />
 <p>Copyright (c) 2012-2026, NTT, Inc.</p>

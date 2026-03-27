@@ -15,10 +15,11 @@ $release = `cat /etc/redhat-release 2> /dev/null`
     or die("unsupported linux distribution other than Redhat");
 
 if ($release !~ /Red Hat Enterprise Linux release (\d+)/ &&
-    $release !~ /CentOS (?:Linux )?release (\d+)/) {
+    $release !~ /CentOS (?:Linux )?release (\d+)/ &&
+    $release !~ /Rocky Linux release (\d+)/) {
     die("can't get RedHat Linux release");
 }
-if (($1 eq '8') || ($1 eq '9')) {
+if ($1 eq '10') {
     $lib_command = 'lib.in/command-rhel8.pm';
 }
 else {
@@ -30,8 +31,8 @@ cp($lib_command, 'lib/PGRex/command.pm')
 
 WriteMakefile(
     NAME              => 'pg-rex_operation_tools',
-    VERSION           => '17.0',
-    PREREQ_PM         => { 'Net::OpenSSH' => 0.62, 'IO::Tty' => 1.11 },
+    VERSION           => '18.0',
+    PREREQ_PM         => { 'Net::OpenSSH' => 0.62, 'IO::Tty' => 1.20 },
     PREFIX            => '/usr/local',
     INST_BIN          => 'bin',
     INST_LIB          => 'lib',
